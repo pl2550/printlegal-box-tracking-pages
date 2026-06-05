@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Printlegal Box Tracking</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #657084;
+      --line: #d7dde7;
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --blue: #174ea6;
+      --blue-dark: #0f3f86;
+      --danger: #b3261e;
+      --danger-bg: #fff0ef;
+      --ok: #146c43;
+      --ok-bg: #e9f6ef;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+
+    main {
+      width: min(100%, 560px);
+      margin: 0 auto;
+      padding: 18px 14px 32px;
+    }
+
+    .brand {
+      margin: 4px 0 16px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 1px 2px rgba(23, 32, 51, 0.05);
+    }
+
+    .box-id {
+      margin: 0 0 12px;
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .saved-name {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcff;
+    }
+
+    .saved-name strong {
+      display: block;
+      font-size: 18px;
+    }
+
+    .saved-name span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 6px;
+      font-weight: 700;
+    }
+
+    input,
+    select,
+    textarea,
+    button {
+      width: 100%;
+      font: inherit;
+    }
+
+    input,
+    select,
+    textarea {
+      border: 1px solid #bcc6d6;
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      padding: 12px;
+    }
+
+    select {
+      min-height: 48px;
+    }
+
+    textarea {
+      min-height: 88px;
+      resize: vertical;
+    }
+
+    button {
+      min-height: 48px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--blue);
+      color: #fff;
+      font-weight: 800;
+      margin-top: 18px;
+      cursor: pointer;
+    }
+
+    button:active {
+      background: var(--blue-dark);
+    }
+
+    button.secondary {
+      width: auto;
+      min-height: 0;
+      margin: 0;
+      padding: 8px 10px;
+      background: transparent;
+      color: var(--blue);
+      border: 1px solid var(--line);
+      font-weight: 700;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 6px;
+    }
+
+    .message {
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 8px;
+      display: none;
+    }
+
+    .message.ok {
+      display: block;
+      color: var(--ok);
+      background: var(--ok-bg);
+      border: 1px solid #b8dfc8;
+    }
+
+    .message.error {
+      display: block;
+      color: var(--danger);
+      background: var(--danger-bg);
+      border: 1px solid #f0b8b4;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    iframe {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand">Printlegal Box Tracking</div>
+    <section class="panel">
+      <div id="boxId" class="box-id">Box ID missing</div>
+
+      <div id="namePanel">
+        <label for="deviceName">Your Name</label>
+        <input id="deviceName" autocomplete="name" placeholder="Enter your name">
+        <button id="saveNameButton" type="button">Save Name</button>
+      </div>
+
+      <div id="trackingPanel" class="hidden">
+        <div class="saved-name">
+          <div>
+            <span>Using name</span>
+            <strong id="savedName"></strong>
+          </div>
+          <button id="changeNameButton" class="secondary" type="button">Change</button>
+        </div>
+
+        <form id="trackingForm" method="post" target="hiddenFrame" action="https://docs.google.com/forms/d/e/1FAIpQLSfLzQzlSgG7FXS_x5SpUOuUpdQKxvO4QoI5_D0VvLA9tXKo3Q/formResponse">
+          <input type="hidden" name="entry.373142793" id="formBoxId">
+          <input type="hidden" name="entry.163036629" id="formName">
+
+          <label for="status">New Status</label>
+          <select id="status" name="entry.467433388" required>
+            <option value="">Select status</option>
+            <option>Received</option>
+            <option>Prep</option>
+            <option>In Scanning</option>
+            <option>Completed</option>
+            <option>Returned</option>
+            <option>Sent to Shredder</option>
+            <option>Location Only - No Status Change</option>
+          </select>
+
+          <label for="location">Move Box To</label>
+          <select id="location" name="entry.373242555" required>
+            <option>No Location Change</option>
+            <option>Adelaide</option>
+            <option>Queen</option>
+            <option>Storage</option>
+          </select>
+          <div class="hint">Leave this as No Location Change unless the box physically moved.</div>
+
+          <label for="notes">Notes</label>
+          <textarea id="notes" name="entry.2051752354" placeholder="Optional"></textarea>
+
+          <button id="submitButton" type="submit">Submit Update</button>
+        </form>
+      </div>
+
+      <div id="message" class="message"></div>
+    </section>
+  </main>
+
+  <iframe name="hiddenFrame" id="hiddenFrame"></iframe>
+
+  <script>
+    const NAME_KEY = 'printlegal.boxTracking.deviceName.v1';
+    const query = new URLSearchParams(window.location.search);
+    const boxId = (query.get('box') || query.get('b') || '').trim();
+    const boxIdEl = document.getElementById('boxId');
+    const namePanel = document.getElementById('namePanel');
+    const trackingPanel = document.getElementById('trackingPanel');
+    const deviceName = document.getElementById('deviceName');
+    const savedName = document.getElementById('savedName');
+    const formBoxId = document.getElementById('formBoxId');
+    const formName = document.getElementById('formName');
+    const message = document.getElementById('message');
+    const form = document.getElementById('trackingForm');
+    const submitButton = document.getElementById('submitButton');
+
+    let pendingSubmit = false;
+
+    function showMessage(text, kind) {
+      message.textContent = text;
+      message.className = `message ${kind}`;
+    }
+
+    function clearMessage() {
+      message.textContent = '';
+      message.className = 'message';
+    }
+
+    function getStoredName() {
+      return (localStorage.getItem(NAME_KEY) || '').trim();
+    }
+
+    function showTracking(name) {
+      savedName.textContent = name;
+      formName.value = name;
+      namePanel.classList.add('hidden');
+      trackingPanel.classList.remove('hidden');
+    }
+
+    function showNameEntry() {
+      trackingPanel.classList.add('hidden');
+      namePanel.classList.remove('hidden');
+      deviceName.value = getStoredName();
+      setTimeout(() => deviceName.focus(), 50);
+    }
+
+    function saveName() {
+      const name = deviceName.value.trim();
+      if (!name) {
+        showMessage('Enter your name first.', 'error');
+        return;
+      }
+      localStorage.setItem(NAME_KEY, name);
+      clearMessage();
+      showTracking(name);
+    }
+
+    document.getElementById('saveNameButton').addEventListener('click', saveName);
+    document.getElementById('changeNameButton').addEventListener('click', showNameEntry);
+    deviceName.addEventListener('keydown', event => {
+      if (event.key === 'Enter') saveName();
+    });
+
+    if (!boxId) {
+      boxIdEl.textContent = 'Box ID missing';
+      showMessage('This QR link does not include a Box ID.', 'error');
+      namePanel.classList.add('hidden');
+    } else {
+      boxIdEl.textContent = boxId;
+      formBoxId.value = boxId;
+      const storedName = getStoredName();
+      if (storedName) showTracking(storedName);
+      else showNameEntry();
+    }
+
+    form.addEventListener('submit', event => {
+      clearMessage();
+      if (!getStoredName()) {
+        event.preventDefault();
+        showNameEntry();
+        showMessage('Save your name first.', 'error');
+        return;
+      }
+      if (!boxId) {
+        event.preventDefault();
+        showMessage('Box ID is missing.', 'error');
+        return;
+      }
+      pendingSubmit = true;
+      submitButton.disabled = true;
+      submitButton.textContent = 'Submitting...';
+      setTimeout(() => {
+        if (pendingSubmit) {
+          pendingSubmit = false;
+          submitButton.disabled = false;
+          submitButton.textContent = 'Submit Update';
+          form.reset();
+          formBoxId.value = boxId;
+          formName.value = getStoredName();
+          showMessage('Update submitted. You can scan the next box.', 'ok');
+        }
+      }, 1200);
+    });
+  </script>
+</body>
+</html>
