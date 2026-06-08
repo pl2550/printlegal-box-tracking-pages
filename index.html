@@ -18,6 +18,8 @@
       --danger-bg: #fff0ef;
       --ok: #146c43;
       --ok-bg: #e9f6ef;
+      --warn: #8a4b00;
+      --warn-bg: #fff6e0;
     }
 
     * {
@@ -142,6 +144,17 @@
       font-weight: 700;
     }
 
+    button.full-secondary {
+      background: #fff;
+      color: var(--blue);
+      border: 1px solid var(--blue);
+    }
+
+    button.danger-secondary {
+      color: var(--danger);
+      border-color: #f0b8b4;
+    }
+
     .hint {
       color: var(--muted);
       font-size: 13px;
@@ -191,6 +204,48 @@
       border: 1px solid #f0b8b4;
     }
 
+    .repeat-banner {
+      margin-bottom: 16px;
+      padding: 12px;
+      border: 1px solid #f1d08a;
+      border-radius: 8px;
+      background: var(--warn-bg);
+      color: var(--warn);
+    }
+
+    .repeat-banner strong,
+    .repeat-banner span {
+      display: block;
+    }
+
+    .repeat-banner span {
+      margin-top: 4px;
+      font-size: 14px;
+    }
+
+    .repeat-banner button {
+      margin-top: 10px;
+    }
+
+    .scanner {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    #reader {
+      overflow: hidden;
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #000;
+    }
+
+    #reader video {
+      width: 100% !important;
+      height: auto !important;
+    }
+
     .hidden {
       display: none;
     }
@@ -199,6 +254,7 @@
       display: none;
     }
   </style>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </head>
 <body>
   <main>
@@ -219,6 +275,12 @@
             <strong id="savedName"></strong>
           </div>
           <button id="changeNameButton" class="secondary" type="button">Change</button>
+        </div>
+
+        <div id="repeatBanner" class="repeat-banner hidden">
+          <strong>Repeat mode active</strong>
+          <span id="repeatDetail">Sent to Shredder will be preselected for boxes scanned today.</span>
+          <button id="turnOffRepeatButton" class="secondary danger-secondary" type="button">Turn Off Repeat</button>
         </div>
 
         <form id="trackingForm" method="post" target="hiddenFrame" action="https://docs.google.com/forms/d/e/1FAIpQLSd54kwY3Hy-_A3eWT4L4spiHd-1fOi4QOLo9QHyVkqxn4nYCw/formResponse">
@@ -270,8 +332,23 @@
           <label for="notes">Notes</label>
           <textarea id="notes" name="entry.310835126" placeholder="Optional"></textarea>
 
+          <div id="repeatPanel" class="hidden">
+            <div class="check-row">
+              <input id="repeatShred" type="checkbox">
+              <label for="repeatShred">Use same process for next boxes today</label>
+            </div>
+            <div class="hint">When this is on, the next scanned box opens with Sent to Shredder preselected. You still must tap Submit Update.</div>
+          </div>
+
           <button id="submitButton" type="submit">Submit Update</button>
         </form>
+
+        <div class="scanner">
+          <button id="scanNextButton" class="full-secondary" type="button">Scan Next Box</button>
+          <div id="reader" class="hidden"></div>
+          <button id="stopScannerButton" class="secondary hidden" type="button">Stop Camera</button>
+          <div id="scannerHint" class="hint">Use this after an update, or use the phone camera app if browser camera access is blocked.</div>
+        </div>
       </div>
 
       <div id="message" class="message"></div>
@@ -282,6 +359,7 @@
 
   <script>
     const NAME_KEY = 'printlegal.boxTracking.deviceName.v1';
+    const REPEAT_KEY = 'printlegal.boxTracking.repeatProcess.v1';
     const query = new URLSearchParams(window.location.search);
     const boxId = (query.get('box') || query.get('b') || '').trim();
     const boxIdEl = document.getElementById('boxId');
@@ -299,11 +377,24 @@
     const batchFirstBox = document.getElementById('batchFirstBox');
     const batchLastBox = document.getElementById('batchLastBox');
     const batchExpectedCount = document.getElementById('batchExpectedCount');
+    const locationSelect = document.getElementById('location');
+    const repeatBanner = document.getElementById('repeatBanner');
+    const repeatDetail = document.getElementById('repeatDetail');
+    const turnOffRepeatButton = document.getElementById('turnOffRepeatButton');
+    const repeatPanel = document.getElementById('repeatPanel');
+    const repeatShred = document.getElementById('repeatShred');
+    const scanNextButton = document.getElementById('scanNextButton');
+    const stopScannerButton = document.getElementById('stopScannerButton');
+    const reader = document.getElementById('reader');
+    const scannerHint = document.getElementById('scannerHint');
     const message = document.getElementById('message');
     const form = document.getElementById('trackingForm');
     const submitButton = document.getElementById('submitButton');
 
     let pendingSubmit = false;
+    let html5QrCode = null;
+    let scannerActive = false;
+    let scanLocked = false;
 
     function showMessage(text, kind) {
       message.textContent = text;
@@ -319,11 +410,75 @@
       return (localStorage.getItem(NAME_KEY) || '').trim();
     }
 
+    function todayKey() {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    function getRepeatPreset() {
+      try {
+        const raw = localStorage.getItem(REPEAT_KEY);
+        if (!raw) return null;
+        const preset = JSON.parse(raw);
+        if (preset.date !== todayKey() || preset.status !== 'Sent to Shredder') {
+          localStorage.removeItem(REPEAT_KEY);
+          return null;
+        }
+        return preset;
+      } catch (error) {
+        localStorage.removeItem(REPEAT_KEY);
+        return null;
+      }
+    }
+
+    function saveRepeatPreset() {
+      const preset = {
+        date: todayKey(),
+        status: 'Sent to Shredder',
+        location: locationSelect.value || 'No Location Change'
+      };
+      localStorage.setItem(REPEAT_KEY, JSON.stringify(preset));
+      renderRepeatState();
+    }
+
+    function clearRepeatPreset() {
+      localStorage.removeItem(REPEAT_KEY);
+      repeatShred.checked = false;
+      renderRepeatState();
+    }
+
+    function renderRepeatState() {
+      const preset = getRepeatPreset();
+      repeatBanner.classList.toggle('hidden', !preset);
+      if (preset) {
+        const moveText = preset.location && preset.location !== 'No Location Change'
+          ? ` Move Box To will be ${preset.location}.`
+          : '';
+        repeatDetail.textContent = `Sent to Shredder will be preselected for boxes scanned today.${moveText}`;
+      }
+      updateRepeatVisibility();
+    }
+
+    function applyRepeatPreset() {
+      const preset = getRepeatPreset();
+      if (!preset || !boxId) return;
+      status.value = preset.status;
+      if (preset.location) locationSelect.value = preset.location;
+      repeatShred.checked = true;
+      updateBatchVisibility();
+      updateRepeatVisibility();
+    }
+
     function showTracking(name) {
       savedName.textContent = name;
       formName.value = name;
       namePanel.classList.add('hidden');
       trackingPanel.classList.remove('hidden');
+      renderRepeatState();
+      applyRepeatPreset();
     }
 
     function showNameEntry() {
@@ -346,11 +501,21 @@
 
     document.getElementById('saveNameButton').addEventListener('click', saveName);
     document.getElementById('changeNameButton').addEventListener('click', showNameEntry);
+    turnOffRepeatButton.addEventListener('click', () => {
+      clearRepeatPreset();
+      showMessage('Repeat mode is off.', 'ok');
+    });
     deviceName.addEventListener('keydown', event => {
       if (event.key === 'Enter') saveName();
     });
     status.addEventListener('change', updateBatchVisibility);
+    status.addEventListener('change', updateRepeatVisibility);
     batchReceive.addEventListener('change', updateBatchVisibility);
+    repeatShred.addEventListener('change', () => {
+      if (!repeatShred.checked) clearRepeatPreset();
+    });
+    scanNextButton.addEventListener('click', startScanner);
+    stopScannerButton.addEventListener('click', stopScanner);
 
     if (!boxId) {
       boxIdEl.textContent = 'Box ID missing';
@@ -370,6 +535,106 @@
       if (!canBatch) batchReceive.checked = false;
       batchFields.classList.toggle('hidden', !(canBatch && batchReceive.checked));
       updateScope.value = canBatch && batchReceive.checked ? 'Batch Receive' : 'Single Box';
+    }
+
+    function updateRepeatVisibility() {
+      const canRepeat = status.value === 'Sent to Shredder';
+      repeatPanel.classList.toggle('hidden', !canRepeat);
+      if (canRepeat) {
+        repeatShred.checked = Boolean(getRepeatPreset());
+      } else {
+        repeatShred.checked = false;
+      }
+    }
+
+    function extractBoxIdFromQr(text) {
+      const decoded = String(text || '').trim();
+      if (!decoded) return '';
+      try {
+        const url = new URL(decoded, window.location.href);
+        const fromQuery = (url.searchParams.get('box') || url.searchParams.get('b') || '').trim();
+        if (fromQuery) return fromQuery.toUpperCase();
+      } catch (error) {
+        // Fall through to direct text matching.
+      }
+      const match = decoded.match(/PL-BOX-\d{5,}/i);
+      return match ? match[0].toUpperCase() : '';
+    }
+
+    function goToBox(nextBoxId) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('box', nextBoxId);
+      url.searchParams.delete('b');
+      window.location.href = url.toString();
+    }
+
+    async function startScanner() {
+      clearMessage();
+      if (!window.Html5Qrcode) {
+        showMessage('Camera scanner is still loading. Try again, or use the phone camera app.', 'error');
+        return;
+      }
+      if (!window.isSecureContext) {
+        showMessage('Browser camera access requires HTTPS. Open the GitHub Pages link or use the phone camera app.', 'error');
+        return;
+      }
+      if (scannerActive) return;
+      scanLocked = false;
+      reader.classList.remove('hidden');
+      stopScannerButton.classList.remove('hidden');
+      scanNextButton.disabled = true;
+      scanNextButton.textContent = 'Starting Camera...';
+      scannerHint.textContent = 'Point the camera at the next box QR code.';
+      try {
+        html5QrCode = new Html5Qrcode('reader');
+        await html5QrCode.start(
+          { facingMode: 'environment' },
+          {
+            fps: 10,
+            qrbox: (width, height) => {
+              const size = Math.floor(Math.min(width, height) * 0.75);
+              return { width: size, height: size };
+            }
+          },
+          decodedText => {
+            if (scanLocked) return;
+            const nextBoxId = extractBoxIdFromQr(decodedText);
+            if (!nextBoxId) {
+              showMessage('QR code found, but no Box ID was detected.', 'error');
+              return;
+            }
+            scanLocked = true;
+            stopScanner().finally(() => goToBox(nextBoxId));
+          }
+        );
+        scannerActive = true;
+        scanNextButton.textContent = 'Camera On';
+      } catch (error) {
+        await stopScanner();
+        showMessage('Could not open the camera. Use the phone camera app to scan the next QR code.', 'error');
+      }
+    }
+
+    async function stopScanner() {
+      try {
+        if (html5QrCode && scannerActive) {
+          await html5QrCode.stop();
+        }
+        if (html5QrCode) {
+          await html5QrCode.clear();
+        }
+      } catch (error) {
+        // Stopping is best effort; the UI still resets below.
+      } finally {
+        html5QrCode = null;
+        scannerActive = false;
+        scanLocked = false;
+        reader.classList.add('hidden');
+        stopScannerButton.classList.add('hidden');
+        scanNextButton.disabled = false;
+        scanNextButton.textContent = 'Scan Next Box';
+        scannerHint.textContent = 'Use this after an update, or use the phone camera app if browser camera access is blocked.';
+      }
     }
 
     form.addEventListener('submit', event => {
@@ -400,6 +665,9 @@
         batchLastBox.value = '';
         batchExpectedCount.value = '';
       }
+      if (status.value === 'Sent to Shredder' && repeatShred.checked) {
+        saveRepeatPreset();
+      }
       pendingSubmit = true;
       submitButton.disabled = true;
       submitButton.textContent = 'Submitting...';
@@ -412,6 +680,7 @@
           formBoxId.value = boxId;
           formName.value = getStoredName();
           updateBatchVisibility();
+          renderRepeatState();
           showMessage('Update submitted. You can scan the next box.', 'ok');
         }
       }, 1200);
