@@ -38,26 +38,21 @@
     main {
       width: min(100%, 560px);
       margin: 0 auto;
-      padding: 18px 14px 32px;
-    }
-
-    .brand {
-      margin: 4px 0 16px;
-      font-size: 18px;
-      font-weight: 700;
+      padding: 10px 10px 22px;
     }
 
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 18px;
+      padding: 12px;
       box-shadow: 0 1px 2px rgba(23, 32, 51, 0.05);
     }
 
     .box-id {
-      margin: 0 0 12px;
-      font-size: 34px;
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.05;
       font-weight: 800;
       letter-spacing: 0;
     }
@@ -66,28 +61,38 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 16px;
-      padding: 10px 12px;
+      gap: 8px;
+      margin-bottom: 10px;
+      padding: 7px 9px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #fbfcff;
     }
 
+    .saved-name div {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      min-width: 0;
+    }
+
     .saved-name strong {
-      display: block;
-      font-size: 18px;
+      display: inline;
+      font-size: 16px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .saved-name span {
-      display: block;
+      display: inline;
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
     }
 
     label {
       display: block;
-      margin: 14px 0 6px;
+      margin: 10px 0 5px;
       font-weight: 700;
     }
 
@@ -106,26 +111,26 @@
       border-radius: 8px;
       background: #fff;
       color: var(--ink);
-      padding: 12px;
+      padding: 10px;
     }
 
     select {
-      min-height: 48px;
+      min-height: 44px;
     }
 
     textarea {
-      min-height: 88px;
+      min-height: 64px;
       resize: vertical;
     }
 
     button {
-      min-height: 48px;
+      min-height: 44px;
       border: 0;
       border-radius: 8px;
       background: var(--blue);
       color: #fff;
       font-weight: 800;
-      margin-top: 18px;
+      margin-top: 12px;
       cursor: pointer;
     }
 
@@ -157,19 +162,53 @@
 
     .hint {
       color: var(--muted);
-      font-size: 13px;
-      margin-top: 6px;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    .field-row {
+      display: grid;
+      grid-template-columns: 96px minmax(0, 1fr);
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .field-row label {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.15;
+    }
+
+    .field-row select {
+      min-width: 0;
+      padding: 8px 10px;
     }
 
     .check-row {
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-top: 14px;
-      padding: 12px;
+      margin-top: 10px;
+      padding: 9px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #fbfcff;
+    }
+
+    @media (max-width: 360px) {
+      .field-row {
+        grid-template-columns: 86px minmax(0, 1fr);
+        gap: 6px;
+      }
+
+      .field-row label {
+        font-size: 13px;
+      }
+
+      .box-id {
+        font-size: 29px;
+      }
     }
 
     .check-row input {
@@ -258,7 +297,6 @@
 </head>
 <body>
   <main>
-    <div class="brand">Printlegal Box Tracking</div>
     <section class="panel">
       <div id="boxId" class="box-id">Box ID missing</div>
 
@@ -271,7 +309,7 @@
       <div id="trackingPanel" class="hidden">
         <div class="saved-name">
           <div>
-            <span>Using name</span>
+            <span>Name</span>
             <strong id="savedName"></strong>
           </div>
           <button id="changeNameButton" class="secondary" type="button">Change</button>
@@ -288,17 +326,19 @@
           <input type="hidden" name="entry.574464119" id="formName">
           <input type="hidden" name="entry.1592794901" id="updateScope" value="Single Box">
 
-          <label for="status">New Status</label>
-          <select id="status" name="entry.1365781315" required>
-            <option value="">Select status</option>
-            <option>Received</option>
-            <option>Prep</option>
-            <option>In Scanning</option>
-            <option>Completed</option>
-            <option>Returned</option>
-            <option>Sent to Shredder</option>
-            <option>Location Only - No Status Change</option>
-          </select>
+          <div class="field-row">
+            <label for="status">New Status</label>
+            <select id="status" name="entry.1365781315" required>
+              <option value="">Select status</option>
+              <option>Received</option>
+              <option>Prep</option>
+              <option>In Scanning</option>
+              <option>Completed</option>
+              <option>Returned</option>
+              <option>Sent to Shredder</option>
+              <option>Location Only - No Status Change</option>
+            </select>
+          </div>
 
           <div id="batchTogglePanel" class="hidden">
             <div class="check-row">
@@ -320,13 +360,15 @@
             <div class="hint">The update is rejected unless the range count matches this number and every box is still Label Created.</div>
           </div>
 
-          <label for="location">Move Box To</label>
-          <select id="location" name="entry.2052323416" required>
-            <option>No Location Change</option>
-            <option>Adelaide</option>
-            <option>Queen</option>
-            <option>Storage</option>
-          </select>
+          <div class="field-row">
+            <label for="location">Move Box To</label>
+            <select id="location" name="entry.2052323416" required>
+              <option>No Location Change</option>
+              <option>Adelaide</option>
+              <option>Queen</option>
+              <option>Storage</option>
+            </select>
+          </div>
           <div class="hint">Leave this as No Location Change unless the box physically moved.</div>
 
           <label for="notes">Notes</label>
@@ -362,6 +404,7 @@
     const REPEAT_KEY = 'printlegal.boxTracking.repeatProcess.v1';
     const query = new URLSearchParams(window.location.search);
     const boxId = (query.get('box') || query.get('b') || '').trim();
+    const boxLabel = (query.get('label') || '').trim();
     const boxIdEl = document.getElementById('boxId');
     const namePanel = document.getElementById('namePanel');
     const trackingPanel = document.getElementById('trackingPanel');
@@ -522,7 +565,7 @@
       showMessage('This QR link does not include a Box ID.', 'error');
       namePanel.classList.add('hidden');
     } else {
-      boxIdEl.textContent = boxId;
+      boxIdEl.textContent = boxLabel || boxId;
       formBoxId.value = boxId;
       const storedName = getStoredName();
       if (storedName) showTracking(storedName);
@@ -547,23 +590,26 @@
       }
     }
 
-    function extractBoxIdFromQr(text) {
+    function extractBoxPayloadFromQr(text) {
       const decoded = String(text || '').trim();
-      if (!decoded) return '';
+      if (!decoded) return { boxId: '', label: '' };
       try {
         const url = new URL(decoded, window.location.href);
         const fromQuery = (url.searchParams.get('box') || url.searchParams.get('b') || '').trim();
-        if (fromQuery) return fromQuery.toUpperCase();
+        const fromLabel = (url.searchParams.get('label') || '').trim();
+        if (fromQuery) return { boxId: fromQuery.toUpperCase(), label: fromLabel };
       } catch (error) {
         // Fall through to direct text matching.
       }
       const match = decoded.match(/PL-BOX-\d{5,}/i);
-      return match ? match[0].toUpperCase() : '';
+      return { boxId: match ? match[0].toUpperCase() : '', label: '' };
     }
 
-    function goToBox(nextBoxId) {
+    function goToBox(nextBoxId, nextLabel) {
       const url = new URL(window.location.href);
       url.searchParams.set('box', nextBoxId);
+      if (nextLabel) url.searchParams.set('label', nextLabel);
+      else url.searchParams.delete('label');
       url.searchParams.delete('b');
       window.location.href = url.toString();
     }
@@ -598,13 +644,13 @@
           },
           decodedText => {
             if (scanLocked) return;
-            const nextBoxId = extractBoxIdFromQr(decodedText);
-            if (!nextBoxId) {
+            const nextBox = extractBoxPayloadFromQr(decodedText);
+            if (!nextBox.boxId) {
               showMessage('QR code found, but no Box ID was detected.', 'error');
               return;
             }
             scanLocked = true;
-            stopScanner().finally(() => goToBox(nextBoxId));
+            stopScanner().finally(() => goToBox(nextBox.boxId, nextBox.label));
           }
         );
         scannerActive = true;
