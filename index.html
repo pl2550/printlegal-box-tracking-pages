@@ -364,9 +364,6 @@
             <label for="location">Move Box To</label>
             <select id="location" name="entry.2052323416" required>
               <option>No Location Change</option>
-              <option>Adelaide</option>
-              <option>Queen</option>
-              <option>Storage</option>
             </select>
           </div>
           <div class="hint">Leave this as No Location Change unless the box physically moved.</div>
@@ -402,6 +399,8 @@
   <script>
     const NAME_KEY = 'printlegal.boxTracking.deviceName.v1';
     const REPEAT_KEY = 'printlegal.boxTracking.repeatProcess.v1';
+    const CONFIG_URL = 'https://script.google.com/macros/s/AKfycbxo_vq27ZS6rycqLOmLbcgZa9fUtX2TGSufJ8yl1jPRCF-MGqHZnUSjHyZBW-eX5YHHBQ/exec?action=config';
+    const FALLBACK_LOCATIONS = ['Adelaide', 'Queen', 'Storage'];
     const query = new URLSearchParams(window.location.search);
     const boxId = (query.get('box') || query.get('b') || '').trim();
     const boxLabel = (query.get('label') || '').trim();
@@ -438,6 +437,7 @@
     let html5QrCode = null;
     let scannerActive = false;
     let scanLocked = false;
+    let locationConfigLoaded = false;
 
     function showMessage(text, kind) {
       message.textContent = text;
@@ -447,6 +447,42 @@
     function clearMessage() {
       message.textContent = '';
       message.className = 'message';
+    }
+
+    function setLocationOptions(locations) {
+      const activeLocations = Array.isArray(locations) && locations.length ? locations : FALLBACK_LOCATIONS;
+      const previous = locationSelect.value || 'No Location Change';
+      locationSelect.innerHTML = '';
+      ['No Location Change'].concat(activeLocations).forEach(value => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        locationSelect.appendChild(option);
+      });
+      locationSelect.value = activeLocations.includes(previous) || previous === 'No Location Change'
+        ? previous
+        : 'No Location Change';
+      locationConfigLoaded = true;
+      applyRepeatPreset();
+    }
+
+    function loadLocationOptions() {
+      const callbackName = '__printlegalLocationConfig';
+      let settled = false;
+      window[callbackName] = data => {
+        settled = true;
+        setLocationOptions(data && data.locations);
+      };
+      const script = document.createElement('script');
+      script.src = `${CONFIG_URL}&callback=${callbackName}&cb=${Date.now()}`;
+      script.async = true;
+      script.onerror = () => {
+        if (!settled) setLocationOptions(FALLBACK_LOCATIONS);
+      };
+      document.head.appendChild(script);
+      setTimeout(() => {
+        if (!locationConfigLoaded) setLocationOptions(FALLBACK_LOCATIONS);
+      }, 3000);
     }
 
     function getStoredName() {
@@ -571,6 +607,7 @@
       if (storedName) showTracking(storedName);
       else showNameEntry();
     }
+    loadLocationOptions();
 
     function updateBatchVisibility() {
       const canBatch = status.value === 'Received';
