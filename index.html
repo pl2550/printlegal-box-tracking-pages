@@ -321,14 +321,16 @@
           <button id="turnOffRepeatButton" class="secondary danger-secondary" type="button">Turn Off Repeat</button>
         </div>
 
-        <form id="trackingForm" method="post" target="hiddenFrame" action="https://docs.google.com/forms/d/e/1FAIpQLSd54kwY3Hy-_A3eWT4L4spiHd-1fOi4QOLo9QHyVkqxn4nYCw/formResponse">
-          <input type="hidden" name="entry.964413080" id="formBoxId">
-          <input type="hidden" name="entry.574464119" id="formName">
-          <input type="hidden" name="entry.1592794901" id="updateScope" value="Single Box">
+        <form id="trackingForm" method="post" target="hiddenFrame" action="https://script.google.com/macros/s/AKfycbxo_vq27ZS6rycqLOmLbcgZa9fUtX2TGSufJ8yl1jPRCF-MGqHZnUSjHyZBW-eX5YHHBQ/exec">
+          <input type="hidden" name="boxId" id="formBoxId">
+          <input type="hidden" name="deviceName" id="formName">
+          <input type="hidden" name="deviceToken" id="formDeviceToken">
+          <input type="hidden" name="userAgent" id="formUserAgent">
+          <input type="hidden" name="updateScope" id="updateScope" value="Single Box">
 
           <div class="field-row">
             <label for="status">New Status</label>
-            <select id="status" name="entry.1365781315" required>
+            <select id="status" name="newStatus" required>
               <option value="">Select status</option>
               <option>Received</option>
               <option>Prepped</option>
@@ -349,26 +351,26 @@
 
           <div id="batchFields" class="hidden">
             <label for="batchFirstBox">First Box ID</label>
-            <input id="batchFirstBox" name="entry.1413714611" placeholder="PL-BOX-00011">
+            <input id="batchFirstBox" name="batchFirstBoxId" placeholder="PL-BOX-00011">
 
             <label for="batchLastBox">Last Box ID</label>
-            <input id="batchLastBox" name="entry.1458408215" placeholder="PL-BOX-00020">
+            <input id="batchLastBox" name="batchLastBoxId" placeholder="PL-BOX-00020">
 
             <label for="batchExpectedCount">Expected Box Count</label>
-            <input id="batchExpectedCount" name="entry.1491748900" inputmode="numeric" pattern="[0-9]*" placeholder="10">
+            <input id="batchExpectedCount" name="batchExpectedCount" inputmode="numeric" pattern="[0-9]*" placeholder="10">
             <div class="hint">The update is rejected unless the range count matches this number and every box is still Label Created.</div>
           </div>
 
           <div class="field-row">
             <label for="location">Move Box To</label>
-            <select id="location" name="entry.2052323416" required>
+            <select id="location" name="moveLocation" required>
               <option>No Location Change</option>
             </select>
           </div>
           <div class="hint">Leave this as No Location Change unless the box physically moved.</div>
 
           <label for="notes">Notes</label>
-          <textarea id="notes" name="entry.310835126" placeholder="Optional"></textarea>
+          <textarea id="notes" name="notes" placeholder="Optional"></textarea>
 
           <div id="repeatPanel" class="hidden">
             <div class="check-row">
@@ -397,6 +399,7 @@
 
   <script>
     const NAME_KEY = 'printlegal.boxTracking.deviceName.v1';
+    const TOKEN_KEY = 'printlegal.boxTracking.deviceToken.v1';
     const REPEAT_KEY = 'printlegal.boxTracking.repeatProcess.v1';
     const CONFIG_URL = 'https://script.google.com/macros/s/AKfycbxo_vq27ZS6rycqLOmLbcgZa9fUtX2TGSufJ8yl1jPRCF-MGqHZnUSjHyZBW-eX5YHHBQ/exec?action=config';
     const FALLBACK_LOCATIONS = ['Adelaide', 'Queen', 'Storage'];
@@ -410,6 +413,8 @@
     const savedName = document.getElementById('savedName');
     const formBoxId = document.getElementById('formBoxId');
     const formName = document.getElementById('formName');
+    const formDeviceToken = document.getElementById('formDeviceToken');
+    const formUserAgent = document.getElementById('formUserAgent');
     const status = document.getElementById('status');
     const updateScope = document.getElementById('updateScope');
     const batchTogglePanel = document.getElementById('batchTogglePanel');
@@ -488,6 +493,17 @@
       return (localStorage.getItem(NAME_KEY) || '').trim();
     }
 
+    function getDeviceToken() {
+      let token = localStorage.getItem(TOKEN_KEY);
+      if (!token) {
+        token = window.crypto && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `device-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        localStorage.setItem(TOKEN_KEY, token);
+      }
+      return token;
+    }
+
     function todayKey() {
       const now = new Date();
       const year = now.getFullYear();
@@ -553,6 +569,8 @@
     function showTracking(name) {
       savedName.textContent = name;
       formName.value = name;
+      formDeviceToken.value = getDeviceToken();
+      formUserAgent.value = navigator.userAgent || '';
       namePanel.classList.add('hidden');
       trackingPanel.classList.remove('hidden');
       renderRepeatState();
@@ -750,6 +768,9 @@
       if (status.value === 'Sent to Shredder' && repeatShred.checked) {
         saveRepeatPreset();
       }
+      formName.value = getStoredName();
+      formDeviceToken.value = getDeviceToken();
+      formUserAgent.value = navigator.userAgent || '';
       pendingSubmit = true;
       submitButton.disabled = true;
       submitButton.textContent = 'Submitting...';
@@ -761,6 +782,8 @@
           form.reset();
           formBoxId.value = boxId;
           formName.value = getStoredName();
+          formDeviceToken.value = getDeviceToken();
+          formUserAgent.value = navigator.userAgent || '';
           updateBatchVisibility();
           renderRepeatState();
           showMessage('Update submitted. You can scan the next box.', 'ok');
