@@ -55,7 +55,20 @@
       line-height: 1.05;
       font-weight: 800;
       letter-spacing: 0;
+      overflow-wrap: anywhere;
     }
+
+    .box-summary { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+    .box-context { margin-bottom: 6px; overflow-wrap: anywhere; }
+    .box-context span { display: block; color: var(--muted); font-size: 13px; }
+    .box-facts { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 4px 8px; margin: 0; font-size: 14px; }
+    .box-facts dt { color: var(--muted); }
+    .box-facts dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+    .box-facts dd.primary-fact { font-size: 17px; }
+    .summary-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+    #boxLoadState { font-size: 13px; }
+    #boxLoadState.error { color: var(--danger); }
+    button:disabled { opacity: .6; cursor: default; }
 
     .saved-name {
       display: flex;
@@ -300,6 +313,24 @@
     <section class="panel">
       <div id="boxId" class="box-id">Box ID missing</div>
 
+      <section id="boxSummary" class="box-summary" aria-label="Current box information" aria-live="polite">
+        <div id="boxDetails" class="hidden">
+          <div class="box-context"><strong id="boxClient"></strong><span id="boxJob"></span></div>
+          <dl class="box-facts">
+            <dt>Current Location</dt><dd id="currentLocation" class="primary-fact"></dd>
+            <dt>Current Status</dt><dd id="currentStatus" class="primary-fact"></dd>
+            <dt>Disposition</dt><dd id="boxDisposition"></dd>
+            <dt>Customer Approval</dt><dd id="customerApproval"></dd>
+            <dt>Last Updated</dt><dd id="lastUpdated"></dd>
+          </dl>
+          <div id="boxBlockedReason" class="hint"></div>
+        </div>
+        <div class="summary-toolbar">
+          <span id="boxLoadState">Loading current box information...</span>
+          <button id="refreshBoxButton" class="secondary" type="button" title="Refresh current box information">Refresh</button>
+        </div>
+      </section>
+
       <div id="namePanel">
         <label for="deviceName">Your Name</label>
         <input id="deviceName" autocomplete="name" placeholder="Enter your name">
@@ -327,6 +358,7 @@
           <input type="hidden" name="deviceToken" id="formDeviceToken">
           <input type="hidden" name="userAgent" id="formUserAgent">
           <input type="hidden" name="updateScope" id="updateScope" value="Single Box">
+          <input type="hidden" name="requestId" id="requestId">
 
           <div class="field-row">
             <label for="status">New Status</label>
@@ -380,7 +412,7 @@
             <div class="hint">When this is on, the next scanned box opens with Sent to Shredder preselected. You still must tap Submit Update.</div>
           </div>
 
-          <button id="submitButton" type="submit">Submit Update</button>
+          <button id="submitButton" type="submit" disabled>Submit Update</button>
         </form>
 
         <div class="scanner">
@@ -402,7 +434,6 @@
     const TOKEN_KEY = 'printlegal.boxTracking.deviceToken.v1';
     const REPEAT_KEY = 'printlegal.boxTracking.repeatProcess.v1';
     const CONFIG_URL = 'https://script.google.com/macros/s/AKfycbxo_vq27ZS6rycqLOmLbcgZa9fUtX2TGSufJ8yl1jPRCF-MGqHZnUSjHyZBW-eX5YHHBQ/exec?action=config';
-    const FALLBACK_LOCATIONS = ['Adelaide', 'Queen', 'Storage'];
     const query = new URLSearchParams(window.location.search);
     const boxId = (query.get('box') || query.get('b') || '').trim();
     const boxLabel = (query.get('label') || '').trim();
@@ -436,12 +467,20 @@
     const message = document.getElementById('message');
     const form = document.getElementById('trackingForm');
     const submitButton = document.getElementById('submitButton');
+    const boxDetails = document.getElementById('boxDetails');
+    const boxLoadState = document.getElementById('boxLoadState');
+    const refreshBoxButton = document.getElementById('refreshBoxButton');
+    const requestIdField = document.getElementById('requestId');
 
     let pendingSubmit = false;
+    let currentBox = null;
+    let activeSubmission = null;
+    let readSequence = 0;
+    let refreshSequence = 0;
+    let receiptTimer;
     let html5QrCode = null;
     let scannerActive = false;
     let scanLocked = false;
-    let locationConfigLoaded = false;
 
     function showMessage(text, kind) {
       message.textContent = text;
@@ -453,8 +492,143 @@
       message.className = 'message';
     }
 
+    function requestBox(requestId) {
+      return new Promise((resolve, reject) => {
+        const callback = '__plBox' + Date.now() + '_' + (++readSequence);
+        const script = document.createElement('script');
+        const url = new URL(CONFIG_URL);
+        url.searchParams.set('action', 'box');
+        url.searchParams.set('box', boxId);
+        url.searchParams.set('callback', callback);
+        url.searchParams.set('cb', Date.now());
+        if (requestId) url.searchParams.set('requestId', requestId);
+        const cleanup = () => {
+          clearTimeout(timer);
+          script.remove();
+          delete window[callback];
+        };
+        const timer = setTimeout(() => { cleanup(); reject(new Error('Request timed out.')); }, 12000);
+        window[callback] = data => { cleanup(); resolve(data); };
+        script.onerror = () => { cleanup(); reject(new Error('Connection failed.')); };
+        script.src = url.toString();
+        document.head.appendChild(script);
+      });
+    }
+
+    function renderBox(box) {
+      if (!box || box.boxId !== boxId) throw new Error('Box response does not match this label.');
+      if (!Array.isArray(box.locations) || !box.locations.length) throw new Error('Active locations unavailable.');
+      currentBox = box;
+      setLocationOptions(box.locations);
+      boxIdEl.textContent = box.boxName || boxLabel || boxId;
+      document.getElementById('boxClient').textContent = box.client;
+      document.getElementById('boxJob').textContent = box.jobName;
+      document.getElementById('currentLocation').textContent = box.currentLocation || 'Not recorded';
+      document.getElementById('currentStatus').textContent = box.currentStatus;
+      document.getElementById('boxDisposition').textContent = box.finalDisposition;
+      document.getElementById('customerApproval').textContent = box.customerApproved
+        ? 'Approved - ' + box.customerApprovedDate : 'Pending';
+      document.getElementById('lastUpdated').textContent = box.lastUpdated || 'Not recorded';
+      document.getElementById('lastUpdated').title = box.timezone || '';
+      document.getElementById('boxBlockedReason').textContent = box.isFinal ? 'Final status recorded.' : box.blockedReason || '';
+      boxDetails.classList.remove('hidden');
+      boxLoadState.textContent = '';
+      boxLoadState.className = '';
+      const previous = status.value;
+      status.replaceChildren();
+      ['', box.nextStatus, 'Location Only - No Status Change'].filter((value, index) => index === 0 || value).forEach(value => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value || 'Select status';
+        status.appendChild(option);
+      });
+      status.value = [...status.options].some(option => option.value === previous) ? previous : '';
+      if (!pendingSubmit) applyRepeatPreset();
+      updateBatchVisibility();
+      updateRepeatVisibility();
+      submitButton.disabled = pendingSubmit;
+    }
+
+    async function refreshBox() {
+      if (!boxId) return;
+      const sequence = ++refreshSequence;
+      refreshBoxButton.disabled = true;
+      submitButton.disabled = true;
+      boxLoadState.textContent = 'Loading current box information...';
+      boxLoadState.className = '';
+      try {
+        const data = await requestBox(activeSubmission && activeSubmission.id);
+        if (sequence !== refreshSequence) return;
+        if (!data || !data.ok) throw new Error('Box information unavailable.');
+        renderBox(data.box);
+        if (data.receipt) finishSubmission(data.receipt);
+      } catch (error) {
+        if (sequence !== refreshSequence) return;
+        currentBox = null;
+        boxDetails.classList.add('hidden');
+        boxLoadState.textContent = 'Unable to load current box information. Tap Refresh to try again.';
+        boxLoadState.className = 'error';
+        submitButton.disabled = true;
+      } finally {
+        if (sequence === refreshSequence) refreshBoxButton.disabled = false;
+      }
+    }
+
+    async function checkSubmission(attempt) {
+      const submission = activeSubmission;
+      if (!submission || !pendingSubmit) return;
+      try {
+        const data = await requestBox(submission.id);
+        if (activeSubmission !== submission) return;
+        if (data && data.receipt) { finishSubmission(data.receipt); return; }
+      } catch (error) { /* A slow response is not a successful update. */ }
+      if (activeSubmission !== submission || !pendingSubmit) return;
+      if (attempt < 5) {
+        receiptTimer = setTimeout(() => checkSubmission(attempt + 1), 4000);
+      } else {
+        submitButton.textContent = 'Awaiting confirmation';
+        showMessage('Update not confirmed. Tap Refresh to check again. Do not submit again; ask a manager if this continues.', 'error');
+      }
+    }
+
+    function finishSubmission(result) {
+      if (!activeSubmission || result.requestId !== activeSubmission.id || result.boxId !== boxId || typeof result.ok !== 'boolean') return;
+      const submission = activeSubmission;
+      activeSubmission = null;
+      pendingSubmit = false;
+      clearTimeout(receiptTimer);
+      // Ignore older reads that started before the server acknowledgement.
+      refreshSequence++;
+      refreshBoxButton.disabled = false;
+      scanNextButton.disabled = false;
+      submitButton.textContent = 'Submit Update';
+      if (result.ok) {
+        if (submission.repeat) {
+          localStorage.setItem(REPEAT_KEY, JSON.stringify({date: todayKey(), status: 'Sent to Shredder', location: submission.location}));
+        }
+        form.reset();
+        formBoxId.value = boxId;
+        formName.value = getStoredName();
+        formDeviceToken.value = getDeviceToken();
+        formUserAgent.value = navigator.userAgent || '';
+        renderRepeatState();
+        showMessage(submission.scope === 'Batch Receive' ? 'Batch Receive confirmed. You can scan the next box.' : 'Update confirmed. You can scan the next box.', 'ok');
+      } else {
+        showMessage('Update was not confirmed: ' + (result.error || 'Ask a manager to check the record.'), 'error');
+      }
+      if (result.box) renderBox(result.box);
+      else refreshBox();
+    }
+
+    window.addEventListener('message', event => {
+      if (!/^https:\/\/(?:script\.google\.com|[a-z0-9-]+-script\.googleusercontent\.com)$/.test(event.origin)) return;
+      if (event.data && event.data.type === 'printlegal-update-result') finishSubmission(event.data);
+    });
+    refreshBoxButton.addEventListener('click', refreshBox);
+    window.addEventListener('pageshow', event => { if (event.persisted) refreshBox(); });
+
     function setLocationOptions(locations) {
-      const activeLocations = Array.isArray(locations) && locations.length ? locations : FALLBACK_LOCATIONS;
+      const activeLocations = locations;
       const previous = locationSelect.value || 'No Location Change';
       locationSelect.innerHTML = '';
       ['No Location Change'].concat(activeLocations).forEach(value => {
@@ -463,30 +637,8 @@
         option.textContent = value;
         locationSelect.appendChild(option);
       });
-      locationSelect.value = activeLocations.includes(previous) || previous === 'No Location Change'
-        ? previous
-        : 'No Location Change';
-      locationConfigLoaded = true;
-      applyRepeatPreset();
-    }
-
-    function loadLocationOptions() {
-      const callbackName = '__printlegalLocationConfig';
-      let settled = false;
-      window[callbackName] = data => {
-        settled = true;
-        setLocationOptions(data && data.locations);
-      };
-      const script = document.createElement('script');
-      script.src = `${CONFIG_URL}&callback=${callbackName}&cb=${Date.now()}`;
-      script.async = true;
-      script.onerror = () => {
-        if (!settled) setLocationOptions(FALLBACK_LOCATIONS);
-      };
-      document.head.appendChild(script);
-      setTimeout(() => {
-        if (!locationConfigLoaded) setLocationOptions(FALLBACK_LOCATIONS);
-      }, 3000);
+      locationSelect.value = activeLocations.includes(previous) || previous === 'No Location Change' ? previous : '';
+      if (!locationSelect.value) showMessage('The selected location is no longer active. Choose Move Box To again.', 'error');
     }
 
     function getStoredName() {
@@ -528,16 +680,6 @@
       }
     }
 
-    function saveRepeatPreset() {
-      const preset = {
-        date: todayKey(),
-        status: 'Sent to Shredder',
-        location: locationSelect.value || 'No Location Change'
-      };
-      localStorage.setItem(REPEAT_KEY, JSON.stringify(preset));
-      renderRepeatState();
-    }
-
     function clearRepeatPreset() {
       localStorage.removeItem(REPEAT_KEY);
       repeatShred.checked = false;
@@ -558,7 +700,7 @@
 
     function applyRepeatPreset() {
       const preset = getRepeatPreset();
-      if (!preset || !boxId) return;
+      if (!preset || !boxId || !currentBox || currentBox.nextStatus !== preset.status || pendingSubmit) return;
       status.value = preset.status;
       if (preset.location) locationSelect.value = preset.location;
       repeatShred.checked = true;
@@ -581,7 +723,6 @@
       trackingPanel.classList.add('hidden');
       namePanel.classList.remove('hidden');
       deviceName.value = getStoredName();
-      setTimeout(() => deviceName.focus(), 50);
     }
 
     function saveName() {
@@ -617,14 +758,15 @@
       boxIdEl.textContent = 'Box ID missing';
       showMessage('This QR link does not include a Box ID.', 'error');
       namePanel.classList.add('hidden');
+      document.getElementById('boxSummary').classList.add('hidden');
     } else {
       boxIdEl.textContent = boxLabel || boxId;
       formBoxId.value = boxId;
       const storedName = getStoredName();
       if (storedName) showTracking(storedName);
       else showNameEntry();
+      refreshBox();
     }
-    loadLocationOptions();
 
     function updateBatchVisibility() {
       const canBatch = status.value === 'Received';
@@ -739,6 +881,11 @@
 
     form.addEventListener('submit', event => {
       clearMessage();
+      if (pendingSubmit || !currentBox) {
+        event.preventDefault();
+        showMessage(pendingSubmit ? 'The previous update is still awaiting confirmation.' : 'Load current box information before submitting.', 'error');
+        return;
+      }
       if (!getStoredName()) {
         event.preventDefault();
         showNameEntry();
@@ -765,30 +912,25 @@
         batchLastBox.value = '';
         batchExpectedCount.value = '';
       }
-      if (status.value === 'Sent to Shredder' && repeatShred.checked) {
-        saveRepeatPreset();
+      if (status.value === 'Sent to Shredder' && !window.confirm('Confirm this box is being handed over to the shredder.')) {
+        event.preventDefault();
+        return;
       }
       formName.value = getStoredName();
       formDeviceToken.value = getDeviceToken();
       formUserAgent.value = navigator.userAgent || '';
       pendingSubmit = true;
+      activeSubmission = {
+        id: crypto.randomUUID(),
+        repeat: status.value === 'Sent to Shredder' && repeatShred.checked,
+        location: locationSelect.value || 'No Location Change',
+        scope: updateScope.value
+      };
+      requestIdField.value = activeSubmission.id;
       submitButton.disabled = true;
+      scanNextButton.disabled = true;
       submitButton.textContent = 'Submitting...';
-      setTimeout(() => {
-        if (pendingSubmit) {
-          pendingSubmit = false;
-          submitButton.disabled = false;
-          submitButton.textContent = 'Submit Update';
-          form.reset();
-          formBoxId.value = boxId;
-          formName.value = getStoredName();
-          formDeviceToken.value = getDeviceToken();
-          formUserAgent.value = navigator.userAgent || '';
-          updateBatchVisibility();
-          renderRepeatState();
-          showMessage('Update submitted. You can scan the next box.', 'ok');
-        }
-      }, 1200);
+      receiptTimer = setTimeout(() => checkSubmission(0), 4000);
     });
   </script>
 </body>
