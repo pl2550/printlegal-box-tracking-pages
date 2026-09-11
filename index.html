@@ -433,7 +433,8 @@
     const NAME_KEY = 'printlegal.boxTracking.deviceName.v1';
     const TOKEN_KEY = 'printlegal.boxTracking.deviceToken.v1';
     const REPEAT_KEY = 'printlegal.boxTracking.repeatProcess.v1';
-    const CONFIG_URL = 'https://script.google.com/macros/s/AKfycbxo_vq27ZS6rycqLOmLbcgZa9fUtX2TGSufJ8yl1jPRCF-MGqHZnUSjHyZBW-eX5YHHBQ/exec?action=config';
+    const APP_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxo_vq27ZS6rycqLOmLbcgZa9fUtX2TGSufJ8yl1jPRCF-MGqHZnUSjHyZBW-eX5YHHBQ/exec';
+    const CONFIG_URL = APP_ENDPOINT + '?action=config';
     const query = new URLSearchParams(window.location.search);
     const boxId = (query.get('box') || query.get('b') || '').trim();
     const boxLabel = (query.get('label') || '').trim();
@@ -481,6 +482,7 @@
     let html5QrCode = null;
     let scannerActive = false;
     let scanLocked = false;
+    const pendingBoxReads = new Map();
     const pendingStorageKey = 'pl-pending-update-' + boxId;
 
     function newRequestId() {
@@ -518,7 +520,7 @@
       message.className = 'message';
     }
 
-    function requestBox(requestId) {
+    function requestBoxByScript(requestId) {
       return new Promise((resolve, reject) => {
         const callback = '__plBox' + Date.now() + '_' + (++readSequence);
         const script = document.createElement('script');
@@ -538,6 +540,58 @@
         script.onerror = () => { cleanup(); reject(new Error('Connection failed.')); };
         script.src = url.toString();
         document.head.appendChild(script);
+      });
+    }
+
+    function requestBoxByForm(requestId) {
+      return new Promise((resolve, reject) => {
+        let readRequestId;
+        try { readRequestId = newRequestId(); }
+        catch (error) { reject(error); return; }
+        const form = document.createElement('form');
+        form.method = 'post';
+        form.action = APP_ENDPOINT;
+        form.target = 'hiddenFrame';
+        form.className = 'hidden';
+        const fields = {
+          readBoxSnapshot: '1',
+          boxId,
+          readRequestId,
+          requestId: requestId || ''
+        };
+        Object.entries(fields).forEach(([name, value]) => {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = name;
+          input.value = value;
+          form.appendChild(input);
+        });
+        const timer = setTimeout(() => {
+          pendingBoxReads.delete(readRequestId);
+          form.remove();
+          reject(new Error('Form request timed out.'));
+        }, 18000);
+        pendingBoxReads.set(readRequestId, data => {
+          clearTimeout(timer);
+          pendingBoxReads.delete(readRequestId);
+          form.remove();
+          resolve(data);
+        });
+        document.body.appendChild(form);
+        form.submit();
+      });
+    }
+
+    function requestBox(requestId) {
+      // Some phone browsers block the redirected Apps Script JSONP resource.
+      // Run a form/iframe request as a second independent route and use the first valid response.
+      return new Promise((resolve, reject) => {
+        let failures = 0;
+        let settled = false;
+        const accept = data => { if (!settled) { settled = true; resolve(data); } };
+        const fail = () => { if (++failures === 2 && !settled) reject(new Error('Both box information routes failed.')); };
+        requestBoxByScript(requestId).then(accept, fail);
+        requestBoxByForm(requestId).then(accept, fail);
       });
     }
 
@@ -660,6 +714,10 @@
     window.addEventListener('message', event => {
       if (!/^https:\/\/(?:script\.google\.com|[a-z0-9-]+-script\.googleusercontent\.com)$/.test(event.origin)) return;
       if (event.data && event.data.type === 'printlegal-update-result') finishSubmission(event.data);
+      if (event.data && event.data.type === 'printlegal-box-read-result' && event.data.boxId === boxId) {
+        const resolve = pendingBoxReads.get(event.data.readRequestId);
+        if (resolve) resolve(event.data);
+      }
     });
     refreshBoxButton.addEventListener('click', refreshBox);
     window.addEventListener('pageshow', event => { if (event.persisted) refreshBox(); });
