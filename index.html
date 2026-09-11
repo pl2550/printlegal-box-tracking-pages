@@ -481,6 +481,32 @@
     let html5QrCode = null;
     let scannerActive = false;
     let scanLocked = false;
+    const pendingStorageKey = 'pl-pending-update-' + boxId;
+
+    function newRequestId() {
+      if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+      if (!window.crypto || !crypto.getRandomValues) throw new Error('Secure browser storage is unavailable.');
+      return Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('');
+    }
+
+    function restorePendingSubmission() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(pendingStorageKey) || 'null');
+        if (!saved) return;
+        if (!saved.id || !/^[a-zA-Z0-9-]{16,80}$/.test(saved.id)) throw new Error('Invalid saved request.');
+        activeSubmission = saved;
+        pendingSubmit = true;
+        submitButton.disabled = true;
+        scanNextButton.disabled = true;
+        submitButton.textContent = 'Awaiting confirmation';
+        showMessage('Checking the previous update. Do not submit it again.', 'error');
+        receiptTimer = setTimeout(() => checkSubmission(0), 4000);
+      } catch (error) {
+        pendingSubmit = true;
+        submitButton.disabled = true;
+        showMessage('Unable to recover the previous update. Ask a manager before submitting.', 'error');
+      }
+    }
 
     function showMessage(text, kind) {
       message.textContent = text;
@@ -580,7 +606,10 @@
       try {
         const data = await requestBox(submission.id);
         if (activeSubmission !== submission) return;
-        if (data && data.receipt) { finishSubmission(data.receipt); return; }
+        if (data && data.receipt) {
+          finishSubmission(data.receipt);
+          if (!pendingSubmit) return;
+        }
       } catch (error) { /* A slow response is not a successful update. */ }
       if (activeSubmission !== submission || !pendingSubmit) return;
       if (attempt < 5) {
@@ -593,10 +622,17 @@
 
     function finishSubmission(result) {
       if (!activeSubmission || result.requestId !== activeSubmission.id || result.boxId !== boxId || typeof result.ok !== 'boolean') return;
+      if (result.uncertain) {
+        submitButton.textContent = 'Awaiting confirmation';
+        showMessage(result.error || 'Update needs review. Do not submit again; ask a manager.', 'error');
+        if (result.box) renderBox(result.box);
+        return;
+      }
       const submission = activeSubmission;
       activeSubmission = null;
       pendingSubmit = false;
       clearTimeout(receiptTimer);
+      try { localStorage.removeItem(pendingStorageKey); } catch (error) { /* Recovered again on next load. */ }
       // Ignore older reads that started before the server acknowledgement.
       refreshSequence++;
       refreshBoxButton.disabled = false;
@@ -613,6 +649,7 @@
         formUserAgent.value = navigator.userAgent || '';
         renderRepeatState();
         showMessage(submission.scope === 'Batch Receive' ? 'Batch Receive confirmed. You can scan the next box.' : 'Update confirmed. You can scan the next box.', 'ok');
+        if (result.warning) showMessage(result.warning, 'ok');
       } else {
         showMessage('Update was not confirmed: ' + (result.error || 'Ask a manager to check the record.'), 'error');
       }
@@ -765,6 +802,7 @@
       const storedName = getStoredName();
       if (storedName) showTracking(storedName);
       else showNameEntry();
+      restorePendingSubmission();
       refreshBox();
     }
 
@@ -880,6 +918,8 @@
     }
 
     form.addEventListener('submit', event => {
+      // Only submit explicitly after preparation succeeds, including storage and request ID creation.
+      event.preventDefault();
       clearMessage();
       if (pendingSubmit || !currentBox) {
         event.preventDefault();
@@ -919,18 +959,27 @@
       formName.value = getStoredName();
       formDeviceToken.value = getDeviceToken();
       formUserAgent.value = navigator.userAgent || '';
-      pendingSubmit = true;
-      activeSubmission = {
-        id: crypto.randomUUID(),
+      const submission = {
+        id: '',
         repeat: status.value === 'Sent to Shredder' && repeatShred.checked,
         location: locationSelect.value || 'No Location Change',
         scope: updateScope.value
       };
+      try {
+        submission.id = newRequestId();
+        localStorage.setItem(pendingStorageKey, JSON.stringify(submission));
+      } catch (error) {
+        showMessage('Unable to prepare a safe update. Nothing was submitted. Check browser storage or ask a manager.', 'error');
+        return;
+      }
+      pendingSubmit = true;
+      activeSubmission = submission;
       requestIdField.value = activeSubmission.id;
       submitButton.disabled = true;
       scanNextButton.disabled = true;
       submitButton.textContent = 'Submitting...';
       receiptTimer = setTimeout(() => checkSubmission(0), 4000);
+      form.submit();
     });
   </script>
 </body>
