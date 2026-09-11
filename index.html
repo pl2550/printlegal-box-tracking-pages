@@ -535,7 +535,7 @@
           script.remove();
           delete window[callback];
         };
-        const timer = setTimeout(() => { cleanup(); reject(new Error('Request timed out.')); }, 12000);
+        const timer = setTimeout(() => { cleanup(); reject(new Error('Request timed out.')); }, 7000);
         window[callback] = data => { cleanup(); resolve(data); };
         script.onerror = () => { cleanup(); reject(new Error('Connection failed.')); };
         script.src = url.toString();
@@ -584,15 +584,8 @@
 
     function requestBox(requestId) {
       // Some phone browsers block the redirected Apps Script JSONP resource.
-      // Run a form/iframe request as a second independent route and use the first valid response.
-      return new Promise((resolve, reject) => {
-        let failures = 0;
-        let settled = false;
-        const accept = data => { if (!settled) { settled = true; resolve(data); } };
-        const fail = () => { if (++failures === 2 && !settled) reject(new Error('Both box information routes failed.')); };
-        requestBoxByScript(requestId).then(accept, fail);
-        requestBoxByForm(requestId).then(accept, fail);
-      });
+      // Use the form/iframe route only after that request fails to avoid doubling normal reads.
+      return requestBoxByScript(requestId).catch(() => requestBoxByForm(requestId));
     }
 
     function renderBox(box) {
