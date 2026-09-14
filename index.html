@@ -57,6 +57,8 @@
       letter-spacing: 0;
       overflow-wrap: anywhere;
     }
+    .box-id .box-sequence-number { font-size: 1.22em; }
+    .box-id .box-sequence-total { font-size: .58em; font-weight: 700; }
 
     .box-summary { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
     .box-context { margin-bottom: 6px; overflow-wrap: anywhere; }
@@ -196,6 +198,12 @@
     .field-row select {
       min-width: 0;
       padding: 8px 10px;
+      font-size: 15px;
+    }
+
+    .field-row input {
+      min-width: 0;
+      padding: 8px 10px;
     }
 
     .check-row {
@@ -317,6 +325,7 @@
         <div id="boxDetails" class="hidden">
           <div class="box-context"><strong id="boxClient"></strong><span id="boxJob"></span></div>
           <dl class="box-facts">
+            <dt id="customerBoxNumberLabel" class="hidden">Cust. Box No.</dt><dd id="customerBoxNumber" class="hidden"></dd>
             <dt>Current Location</dt><dd id="currentLocation" class="primary-fact"></dd>
             <dt>Current Status</dt><dd id="currentStatus" class="primary-fact"></dd>
             <dt>Disposition</dt><dd id="boxDisposition"></dd>
@@ -358,9 +367,10 @@
           <input type="hidden" name="deviceToken" id="formDeviceToken">
           <input type="hidden" name="userAgent" id="formUserAgent">
           <input type="hidden" name="updateScope" id="updateScope" value="Single Box">
+          <input type="hidden" name="operation" id="operation" value="Update">
           <input type="hidden" name="requestId" id="requestId">
 
-          <div class="field-row">
+          <div id="statusRow" class="field-row">
             <label for="status">New Status</label>
             <select id="status" name="newStatus" required>
               <option value="">Select status</option>
@@ -372,6 +382,12 @@
               <option>Location Only - No Status Change</option>
             </select>
           </div>
+
+          <div id="workTimePanel" class="field-row hidden">
+            <label for="workMinutes">Time Spent</label>
+            <input id="workMinutes" name="workMinutes" type="number" min="1" max="1440" step="1" inputmode="numeric" placeholder="Minutes">
+          </div>
+          <div id="workTimeHint" class="hint hidden">Required. Enter the total minutes spent on this box.</div>
 
           <div id="batchTogglePanel" class="hidden">
             <div class="check-row">
@@ -393,16 +409,25 @@
             <div class="hint">The update is rejected unless the range count matches this number and every box is still Label Created.</div>
           </div>
 
-          <div class="field-row">
+          <div id="locationRow" class="field-row">
             <label for="location">Move Box To</label>
             <select id="location" name="moveLocation" required>
               <option>No Location Change</option>
             </select>
           </div>
-          <div class="hint">Leave this as No Location Change unless the box physically moved.</div>
+          <div id="locationHint" class="hint">Leave this unchanged unless the box physically moved.</div>
 
-          <label for="notes">Notes</label>
-          <textarea id="notes" name="notes" placeholder="Optional"></textarea>
+          <div id="notesBlock">
+            <label for="notes">Notes</label>
+            <textarea id="notes" name="notes" placeholder="Optional"></textarea>
+          </div>
+
+          <div id="undoFields" class="hidden">
+            <div id="undoDescription" class="hint"></div>
+            <label for="undoReason">Reason for Undo</label>
+            <textarea id="undoReason" name="undoReason" placeholder="Required"></textarea>
+            <button id="cancelUndoButton" class="full-secondary" type="button">Cancel Undo</button>
+          </div>
 
           <div id="repeatPanel" class="hidden">
             <div class="check-row">
@@ -413,6 +438,11 @@
           </div>
 
           <button id="submitButton" type="submit" disabled>Submit Update</button>
+
+          <div id="undoActionPanel" class="hidden">
+            <button id="undoLastStatusButton" class="full-secondary" type="button">Undo Last Status</button>
+            <div id="undoActionHint" class="hint"></div>
+          </div>
         </form>
 
         <div class="scanner">
@@ -448,7 +478,12 @@
     const formDeviceToken = document.getElementById('formDeviceToken');
     const formUserAgent = document.getElementById('formUserAgent');
     const status = document.getElementById('status');
+    const statusRow = document.getElementById('statusRow');
+    const workTimePanel = document.getElementById('workTimePanel');
+    const workTimeHint = document.getElementById('workTimeHint');
+    const workMinutes = document.getElementById('workMinutes');
     const updateScope = document.getElementById('updateScope');
+    const operation = document.getElementById('operation');
     const batchTogglePanel = document.getElementById('batchTogglePanel');
     const batchReceive = document.getElementById('batchReceive');
     const batchFields = document.getElementById('batchFields');
@@ -456,6 +491,16 @@
     const batchLastBox = document.getElementById('batchLastBox');
     const batchExpectedCount = document.getElementById('batchExpectedCount');
     const locationSelect = document.getElementById('location');
+    const locationRow = document.getElementById('locationRow');
+    const locationHint = document.getElementById('locationHint');
+    const notesBlock = document.getElementById('notesBlock');
+    const undoFields = document.getElementById('undoFields');
+    const undoDescription = document.getElementById('undoDescription');
+    const undoReason = document.getElementById('undoReason');
+    const undoActionPanel = document.getElementById('undoActionPanel');
+    const undoActionHint = document.getElementById('undoActionHint');
+    const undoLastStatusButton = document.getElementById('undoLastStatusButton');
+    const cancelUndoButton = document.getElementById('cancelUndoButton');
     const repeatBanner = document.getElementById('repeatBanner');
     const repeatDetail = document.getElementById('repeatDetail');
     const turnOffRepeatButton = document.getElementById('turnOffRepeatButton');
@@ -482,6 +527,7 @@
     let html5QrCode = null;
     let scannerActive = false;
     let scanLocked = false;
+    let undoMode = false;
     const pendingBoxReads = new Map();
     const pendingStorageKey = 'pl-pending-update-' + boxId;
 
@@ -592,10 +638,16 @@
       if (!box || box.boxId !== boxId) throw new Error('Box response does not match this label.');
       if (!Array.isArray(box.locations) || !box.locations.length) throw new Error('Active locations unavailable.');
       currentBox = box;
-      setLocationOptions(box.locations);
-      boxIdEl.textContent = box.boxName || boxLabel || boxId;
+      setLocationOptions(box.locations, box.currentLocation);
+      renderBoxTitle(box.boxName || boxLabel || boxId);
       document.getElementById('boxClient').textContent = box.client;
       document.getElementById('boxJob').textContent = box.jobName;
+      const customerBoxNumberLabel = document.getElementById('customerBoxNumberLabel');
+      const customerBoxNumber = document.getElementById('customerBoxNumber');
+      const hasCustomerBoxNumber = Boolean((box.customerBoxNumber || '').trim());
+      customerBoxNumberLabel.classList.toggle('hidden', !hasCustomerBoxNumber);
+      customerBoxNumber.classList.toggle('hidden', !hasCustomerBoxNumber);
+      customerBoxNumber.textContent = box.customerBoxNumber || '';
       document.getElementById('currentLocation').textContent = box.currentLocation || 'Not recorded';
       document.getElementById('currentStatus').textContent = box.currentStatus;
       document.getElementById('boxDisposition').textContent = box.finalDisposition;
@@ -616,10 +668,33 @@
         status.appendChild(option);
       });
       status.value = [...status.options].some(option => option.value === previous) ? previous : '';
+      setUndoMode(false);
       if (!pendingSubmit) applyRepeatPreset();
       updateBatchVisibility();
       updateRepeatVisibility();
+      updateWorkTimeVisibility();
+      renderUndoAvailability();
       submitButton.disabled = pendingSubmit;
+    }
+
+    function renderBoxTitle(value) {
+      const text = String(value || '').trim();
+      const match = text.match(/^Box\s+(\d+)\s+of\s+(\d+)$/i);
+      boxIdEl.replaceChildren();
+      if (!match) {
+        boxIdEl.textContent = text;
+        return;
+      }
+      boxIdEl.appendChild(document.createTextNode('Box '));
+      const number = document.createElement('span');
+      number.className = 'box-sequence-number';
+      number.textContent = match[1];
+      boxIdEl.appendChild(number);
+      boxIdEl.appendChild(document.createTextNode(' '));
+      const total = document.createElement('span');
+      total.className = 'box-sequence-total';
+      total.textContent = `of ${match[2]}`;
+      boxIdEl.appendChild(total);
     }
 
     async function refreshBox() {
@@ -695,7 +770,11 @@
         formDeviceToken.value = getDeviceToken();
         formUserAgent.value = navigator.userAgent || '';
         renderRepeatState();
-        showMessage(submission.scope === 'Batch Receive' ? 'Batch Receive confirmed. You can scan the next box.' : 'Update confirmed. You can scan the next box.', 'ok');
+        showMessage(submission.operation === 'Undo Last Status'
+          ? 'Undo confirmed. Check the current status before continuing.'
+          : submission.scope === 'Batch Receive'
+            ? 'Batch Receive confirmed. You can scan the next box.'
+            : 'Update confirmed. You can scan the next box.', 'ok');
         if (result.warning) showMessage(result.warning, 'ok');
       } else {
         showMessage('Update was not confirmed: ' + (result.error || 'Ask a manager to check the record.'), 'error');
@@ -715,17 +794,19 @@
     refreshBoxButton.addEventListener('click', refreshBox);
     window.addEventListener('pageshow', event => { if (event.persisted) refreshBox(); });
 
-    function setLocationOptions(locations) {
+    function setLocationOptions(locations, currentLocation) {
       const activeLocations = locations;
       const previous = locationSelect.value || 'No Location Change';
       locationSelect.innerHTML = '';
-      ['No Location Change'].concat(activeLocations).forEach(value => {
+      const choices = ['No Location Change'].concat(activeLocations.filter(value => value !== currentLocation));
+      choices.forEach(value => {
         const option = document.createElement('option');
         option.value = value;
-        option.textContent = value;
+        option.textContent = value === 'No Location Change' && currentLocation
+          ? `Current: ${currentLocation} (No change)` : value;
         locationSelect.appendChild(option);
       });
-      locationSelect.value = activeLocations.includes(previous) || previous === 'No Location Change' ? previous : '';
+      locationSelect.value = choices.includes(previous) ? previous : 'No Location Change';
       if (!locationSelect.value) showMessage('The selected location is no longer active. Choose Move Box To again.', 'error');
     }
 
@@ -790,10 +871,63 @@
       const preset = getRepeatPreset();
       if (!preset || !boxId || !currentBox || currentBox.nextStatus !== preset.status || pendingSubmit) return;
       status.value = preset.status;
-      if (preset.location) locationSelect.value = preset.location;
+      if (preset.location) {
+        locationSelect.value = preset.location === currentBox.currentLocation
+          ? 'No Location Change' : preset.location;
+      }
       repeatShred.checked = true;
       updateBatchVisibility();
       updateRepeatVisibility();
+      updateWorkTimeVisibility();
+    }
+
+    function updateWorkTimeVisibility() {
+      const needsTime = !undoMode && ['Prepped', 'Scanned'].includes(status.value);
+      workTimePanel.classList.toggle('hidden', !needsTime);
+      workTimeHint.classList.toggle('hidden', !needsTime);
+      workMinutes.required = needsTime;
+      if (!needsTime) workMinutes.value = '';
+    }
+
+    function renderUndoAvailability() {
+      const available = Boolean(currentBox && currentBox.canUndo && !pendingSubmit && !undoMode);
+      undoActionPanel.classList.toggle('hidden', !available);
+      if (available) {
+        undoActionHint.textContent = `Use only to correct the most recent status: ${currentBox.currentStatus} to ${currentBox.undoToStatus}.`;
+      }
+    }
+
+    function setUndoMode(active) {
+      undoMode = Boolean(active && currentBox && currentBox.canUndo && !pendingSubmit);
+      operation.value = undoMode ? 'Undo Last Status' : 'Update';
+      statusRow.classList.toggle('hidden', undoMode);
+      locationRow.classList.toggle('hidden', undoMode);
+      locationHint.classList.toggle('hidden', undoMode);
+      notesBlock.classList.toggle('hidden', undoMode);
+      batchTogglePanel.classList.add('hidden');
+      batchFields.classList.add('hidden');
+      repeatPanel.classList.add('hidden');
+      undoFields.classList.toggle('hidden', !undoMode);
+      undoActionPanel.classList.toggle('hidden', undoMode || !(currentBox && currentBox.canUndo));
+      undoReason.required = undoMode;
+      if (undoMode) {
+        updateScope.value = 'Single Box';
+        batchReceive.checked = false;
+        repeatShred.checked = false;
+        workMinutes.value = '';
+        workTimePanel.classList.add('hidden');
+        workTimeHint.classList.add('hidden');
+        undoDescription.textContent = `This will change ${currentBox.currentStatus} back to ${currentBox.undoToStatus}. The matching date and work time will be cleared; location will not change.`;
+        submitButton.textContent = 'Confirm Undo';
+      } else {
+        undoReason.value = '';
+        undoReason.required = false;
+        submitButton.textContent = pendingSubmit ? 'Awaiting confirmation' : 'Submit Update';
+        updateBatchVisibility();
+        updateRepeatVisibility();
+        updateWorkTimeVisibility();
+        renderUndoAvailability();
+      }
     }
 
     function showTracking(name) {
@@ -835,12 +969,21 @@
     });
     status.addEventListener('change', updateBatchVisibility);
     status.addEventListener('change', updateRepeatVisibility);
+    status.addEventListener('change', updateWorkTimeVisibility);
     batchReceive.addEventListener('change', updateBatchVisibility);
     repeatShred.addEventListener('change', () => {
       if (!repeatShred.checked) clearRepeatPreset();
     });
     scanNextButton.addEventListener('click', startScanner);
     stopScannerButton.addEventListener('click', stopScanner);
+    undoLastStatusButton.addEventListener('click', () => {
+      clearMessage();
+      setUndoMode(true);
+    });
+    cancelUndoButton.addEventListener('click', () => {
+      clearMessage();
+      setUndoMode(false);
+    });
 
     if (!boxId) {
       boxIdEl.textContent = 'Box ID missing';
@@ -988,8 +1131,22 @@
         showMessage('Box ID is missing.', 'error');
         return;
       }
+      if (undoMode) {
+        const reason = undoReason.value.trim();
+        if (!reason) {
+          showMessage('Reason for Undo is required.', 'error');
+          return;
+        }
+        if (!window.confirm(`Undo ${currentBox.currentStatus} and return this box to ${currentBox.undoToStatus}?`)) return;
+        updateScope.value = 'Single Box';
+        locationSelect.value = 'No Location Change';
+        workMinutes.value = '';
+      } else if (!status.value) {
+        showMessage('Select New Status.', 'error');
+        return;
+      }
       updateBatchVisibility();
-      if (updateScope.value === 'Batch Receive') {
+      if (!undoMode && updateScope.value === 'Batch Receive') {
         const first = batchFirstBox.value.trim();
         const last = batchLastBox.value.trim();
         const count = Number(batchExpectedCount.value.trim());
@@ -998,12 +1155,19 @@
           showMessage('Batch Receive requires First Box ID, Last Box ID, and Expected Box Count.', 'error');
           return;
         }
-      } else {
+      } else if (!undoMode) {
         batchFirstBox.value = '';
         batchLastBox.value = '';
         batchExpectedCount.value = '';
       }
-      if (status.value === 'Sent to Shredder' && !window.confirm('Confirm this box is being handed over to the shredder.')) {
+      if (!undoMode && ['Prepped', 'Scanned'].includes(status.value)) {
+        const minutes = Number(workMinutes.value.trim());
+        if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+          showMessage('Time Spent is required as a whole number from 1 to 1440 minutes.', 'error');
+          return;
+        }
+      }
+      if (!undoMode && status.value === 'Sent to Shredder' && !window.confirm('Confirm this box is being handed over to the shredder.')) {
         event.preventDefault();
         return;
       }
@@ -1014,7 +1178,8 @@
         id: '',
         repeat: status.value === 'Sent to Shredder' && repeatShred.checked,
         location: locationSelect.value || 'No Location Change',
-        scope: updateScope.value
+        scope: updateScope.value,
+        operation: operation.value
       };
       try {
         submission.id = newRequestId();
