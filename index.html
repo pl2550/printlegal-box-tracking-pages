@@ -212,6 +212,17 @@
       padding: 8px 10px;
     }
 
+    .customer-number-row {
+      grid-template-columns: 96px minmax(0, 1fr) auto;
+    }
+
+    .customer-number-row button {
+      width: auto;
+      min-height: 38px;
+      margin: 0;
+      padding: 8px 12px;
+    }
+
     .check-row {
       display: flex;
       align-items: center;
@@ -231,6 +242,10 @@
 
       .field-row label {
         font-size: 13px;
+      }
+
+      .customer-number-row {
+        grid-template-columns: 86px minmax(0, 1fr) auto;
       }
 
       .box-id {
@@ -332,6 +347,8 @@
           <div class="box-context"><strong id="boxClient"></strong><span id="boxJob"></span></div>
           <dl class="box-facts">
             <dt id="customerBoxNumberLabel" class="hidden">Cust. Box No.</dt><dd id="customerBoxNumber" class="hidden"></dd>
+            <dt id="prepWorkerLabel" class="hidden">Prep Worker</dt><dd id="prepWorker" class="hidden"></dd>
+            <dt id="scanWorkerLabel" class="hidden">Scan Worker</dt><dd id="scanWorker" class="hidden"></dd>
             <dt>Current Location</dt><dd id="currentLocation" class="primary-fact"></dd>
             <dt>Current Status</dt><dd id="currentStatus" class="primary-fact"></dd>
             <dt>Disposition</dt><dd id="boxDisposition"></dd>
@@ -375,13 +392,23 @@
           <input type="hidden" name="updateScope" id="updateScope" value="Single Box">
           <input type="hidden" name="operation" id="operation" value="Update">
           <input type="hidden" name="requestId" id="requestId">
+          <input type="hidden" name="confirmClearCustomerBoxNumber" id="confirmClearCustomerBoxNumber" value="0">
+          <input type="hidden" name="expectedCustomerBoxNumber" id="expectedCustomerBoxNumber">
+
+          <div class="field-row customer-number-row">
+            <label for="customerBoxNumberInput">Cust. Box No.</label>
+            <input id="customerBoxNumberInput" name="customerBoxNumber" autocomplete="off" placeholder="Optional">
+            <button id="saveCustomerBoxNumberButton" class="secondary" type="button" title="Save Cust. Box Number">Save</button>
+          </div>
 
           <div id="statusRow" class="field-row">
             <label for="status">New Status</label>
             <select id="status" name="newStatus" required>
               <option value="">Select status</option>
               <option>Received</option>
+              <option>Prep</option>
               <option>Prepped</option>
+              <option>Scanning</option>
               <option>Scanned</option>
               <option>Returned</option>
               <option>Sent to Shredder</option>
@@ -488,6 +515,10 @@
     const workTimePanel = document.getElementById('workTimePanel');
     const workTimeHint = document.getElementById('workTimeHint');
     const workMinutes = document.getElementById('workMinutes');
+    const customerBoxNumberInput = document.getElementById('customerBoxNumberInput');
+    const saveCustomerBoxNumberButton = document.getElementById('saveCustomerBoxNumberButton');
+    const confirmClearCustomerBoxNumber = document.getElementById('confirmClearCustomerBoxNumber');
+    const expectedCustomerBoxNumber = document.getElementById('expectedCustomerBoxNumber');
     const updateScope = document.getElementById('updateScope');
     const operation = document.getElementById('operation');
     const batchTogglePanel = document.getElementById('batchTogglePanel');
@@ -534,6 +565,7 @@
     let scannerActive = false;
     let scanLocked = false;
     let undoMode = false;
+    let loadedCustomerBoxNumber = '';
     const pendingBoxReads = new Map();
     const pendingStorageKey = 'pl-pending-update-' + boxId;
 
@@ -654,6 +686,11 @@
       customerBoxNumberLabel.classList.toggle('hidden', !hasCustomerBoxNumber);
       customerBoxNumber.classList.toggle('hidden', !hasCustomerBoxNumber);
       customerBoxNumber.textContent = box.customerBoxNumber || '';
+      loadedCustomerBoxNumber = String(box.customerBoxNumber || '').trim();
+      customerBoxNumberInput.value = loadedCustomerBoxNumber;
+      expectedCustomerBoxNumber.value = loadedCustomerBoxNumber;
+      renderOptionalFact('prepWorkerLabel', 'prepWorker', box.prepWorker);
+      renderOptionalFact('scanWorkerLabel', 'scanWorker', box.scanWorker);
       document.getElementById('currentLocation').textContent = box.currentLocation || 'Not recorded';
       document.getElementById('currentStatus').textContent = box.currentStatus;
       document.getElementById('boxDisposition').textContent = box.finalDisposition;
@@ -670,7 +707,7 @@
       ['', box.nextStatus, 'Location Only - No Status Change'].filter((value, index) => index === 0 || value).forEach(value => {
         const option = document.createElement('option');
         option.value = value;
-        option.textContent = value || 'Select status';
+        option.textContent = value ? actionLabelForStatus(value) : 'Select action';
         status.appendChild(option);
       });
       status.value = [...status.options].some(option => option.value === previous) ? previous : '';
@@ -681,6 +718,26 @@
       updateWorkTimeVisibility();
       renderUndoAvailability();
       submitButton.disabled = pendingSubmit;
+      updateCustomerBoxNumberButton();
+      updateSubmitButtonLabel();
+    }
+
+    function renderOptionalFact(labelId, valueId, value) {
+      const label = document.getElementById(labelId);
+      const output = document.getElementById(valueId);
+      const text = String(value || '').trim();
+      label.classList.toggle('hidden', !text);
+      output.classList.toggle('hidden', !text);
+      output.textContent = text;
+    }
+
+    function actionLabelForStatus(value) {
+      if (value === 'Prep') return 'Start Prep';
+      if (value === 'Prepped') return 'Finish Prep';
+      if (value === 'Scanning') return 'Start Scanning';
+      if (value === 'Scanned') return 'Finish Scanning';
+      if (value === 'Location Only - No Status Change') return 'Update Location Only';
+      return value;
     }
 
     function renderBoxTitle(value) {
@@ -775,9 +832,16 @@
         formName.value = getStoredName();
         formDeviceToken.value = getDeviceToken();
         formUserAgent.value = navigator.userAgent || '';
+        updateScope.value = 'Single Box';
+        operation.value = 'Update';
+        confirmClearCustomerBoxNumber.value = '0';
+        expectedCustomerBoxNumber.value = loadedCustomerBoxNumber;
+        status.required = true;
         renderRepeatState();
         showMessage(submission.operation === 'Undo Last Status'
           ? 'Undo confirmed. Check the current status before continuing.'
+          : submission.operation === 'Save Customer Box Number'
+            ? 'Cust. Box Number saved.'
           : submission.scope === 'Batch Receive'
             ? 'Batch Receive confirmed. You can scan the next box.'
             : 'Update confirmed. You can scan the next box.', 'ok');
@@ -893,6 +957,21 @@
       workTimeHint.classList.toggle('hidden', !needsTime);
       workMinutes.required = needsTime;
       if (!needsTime) workMinutes.value = '';
+      updateSubmitButtonLabel();
+    }
+
+    function updateSubmitButtonLabel() {
+      if (pendingSubmit) return;
+      if (undoMode) {
+        submitButton.textContent = 'Confirm Undo';
+        return;
+      }
+      submitButton.textContent = status.value ? actionLabelForStatus(status.value) : 'Submit Update';
+    }
+
+    function updateCustomerBoxNumberButton() {
+      const changed = customerBoxNumberInput.value.trim() !== loadedCustomerBoxNumber;
+      saveCustomerBoxNumberButton.disabled = pendingSubmit || undoMode || !currentBox || !changed;
     }
 
     function renderUndoAvailability() {
@@ -906,6 +985,8 @@
     function setUndoMode(active) {
       undoMode = Boolean(active && currentBox && currentBox.canUndo && !pendingSubmit);
       operation.value = undoMode ? 'Undo Last Status' : 'Update';
+      status.required = !undoMode;
+      customerBoxNumberInput.disabled = undoMode;
       statusRow.classList.toggle('hidden', undoMode);
       locationRow.classList.toggle('hidden', undoMode);
       locationHint.classList.toggle('hidden', undoMode);
@@ -933,7 +1014,9 @@
         updateRepeatVisibility();
         updateWorkTimeVisibility();
         renderUndoAvailability();
+        updateSubmitButtonLabel();
       }
+      updateCustomerBoxNumberButton();
     }
 
     function showTracking(name) {
@@ -973,9 +1056,25 @@
     deviceName.addEventListener('keydown', event => {
       if (event.key === 'Enter') saveName();
     });
-    status.addEventListener('change', updateBatchVisibility);
-    status.addEventListener('change', updateRepeatVisibility);
-    status.addEventListener('change', updateWorkTimeVisibility);
+    status.addEventListener('change', () => {
+      if (!undoMode) operation.value = 'Update';
+      updateBatchVisibility();
+      updateRepeatVisibility();
+      updateWorkTimeVisibility();
+    });
+    customerBoxNumberInput.addEventListener('input', updateCustomerBoxNumberButton);
+    saveCustomerBoxNumberButton.addEventListener('click', () => {
+      clearMessage();
+      operation.value = 'Save Customer Box Number';
+      status.required = false;
+      form.requestSubmit();
+    });
+    submitButton.addEventListener('click', () => {
+      if (!undoMode) {
+        operation.value = 'Update';
+        status.required = true;
+      }
+    });
     batchReceive.addEventListener('change', updateBatchVisibility);
     repeatShred.addEventListener('change', () => {
       if (!repeatShred.checked) clearRepeatPreset();
@@ -1137,7 +1236,27 @@
         showMessage('Box ID is missing.', 'error');
         return;
       }
-      if (undoMode) {
+      const customerOnly = operation.value === 'Save Customer Box Number';
+      const customerBoxNumberChanged = customerBoxNumberInput.value.trim() !== loadedCustomerBoxNumber;
+      confirmClearCustomerBoxNumber.value = '0';
+      if (customerOnly && !customerBoxNumberChanged) {
+        showMessage('Cust. Box Number has not changed.', 'error');
+        return;
+      }
+      if (customerBoxNumberChanged && loadedCustomerBoxNumber && !customerBoxNumberInput.value.trim()) {
+        if (!window.confirm('Clear the existing Cust. Box Number?')) return;
+        confirmClearCustomerBoxNumber.value = '1';
+      }
+      if (customerOnly) {
+        status.required = false;
+        status.value = '';
+        updateScope.value = 'Single Box';
+        locationSelect.value = 'No Location Change';
+        workMinutes.value = '';
+        batchReceive.checked = false;
+        repeatShred.checked = false;
+        undoReason.value = '';
+      } else if (undoMode) {
         const reason = undoReason.value.trim();
         if (!reason) {
           showMessage('Reason for Undo is required.', 'error');
@@ -1151,8 +1270,8 @@
         showMessage('Select New Status.', 'error');
         return;
       }
-      updateBatchVisibility();
-      if (!undoMode && updateScope.value === 'Batch Receive') {
+      if (!customerOnly) updateBatchVisibility();
+      if (!customerOnly && !undoMode && updateScope.value === 'Batch Receive') {
         const first = batchFirstBox.value.trim();
         const last = batchLastBox.value.trim();
         const count = Number(batchExpectedCount.value.trim());
@@ -1161,19 +1280,19 @@
           showMessage('Batch Receive requires First Box ID, Last Box ID, and Expected Box Count.', 'error');
           return;
         }
-      } else if (!undoMode) {
+      } else if (!customerOnly && !undoMode) {
         batchFirstBox.value = '';
         batchLastBox.value = '';
         batchExpectedCount.value = '';
       }
-      if (!undoMode && ['Prepped', 'Scanned'].includes(status.value)) {
+      if (!customerOnly && !undoMode && ['Prepped', 'Scanned'].includes(status.value)) {
         const minutes = Number(workMinutes.value.trim());
         if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
           showMessage('Time Spent is required as a whole number from 1 to 1440 minutes.', 'error');
           return;
         }
       }
-      if (!undoMode && status.value === 'Sent to Shredder' && !window.confirm('Confirm this box is being handed over to the shredder.')) {
+      if (!customerOnly && !undoMode && status.value === 'Sent to Shredder' && !window.confirm('Confirm this box is being handed over to the shredder.')) {
         event.preventDefault();
         return;
       }
@@ -1182,7 +1301,7 @@
       formUserAgent.value = navigator.userAgent || '';
       const submission = {
         id: '',
-        repeat: status.value === 'Sent to Shredder' && repeatShred.checked,
+        repeat: !customerOnly && status.value === 'Sent to Shredder' && repeatShred.checked,
         location: locationSelect.value || 'No Location Change',
         scope: updateScope.value,
         operation: operation.value
