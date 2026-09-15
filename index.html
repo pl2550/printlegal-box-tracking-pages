@@ -69,6 +69,12 @@
     .box-facts dd.primary-fact { font-size: 17px; }
     .summary-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
     #boxLoadState { font-size: 13px; }
+    #boxLoadState.loading {
+      color: var(--danger);
+      font-size: 20px;
+      font-weight: 800;
+      line-height: 1.25;
+    }
     #boxLoadState.error { color: var(--danger); }
     button:disabled { opacity: .6; cursor: default; }
 
@@ -335,7 +341,7 @@
           <div id="boxBlockedReason" class="hint"></div>
         </div>
         <div class="summary-toolbar">
-          <span id="boxLoadState">Loading current box information...</span>
+          <span id="boxLoadState" class="loading">Loading current box status...</span>
           <button id="refreshBoxButton" class="secondary" type="button" title="Refresh current box information">Refresh</button>
         </div>
       </section>
@@ -702,8 +708,8 @@
       const sequence = ++refreshSequence;
       refreshBoxButton.disabled = true;
       submitButton.disabled = true;
-      boxLoadState.textContent = 'Loading current box information...';
-      boxLoadState.className = '';
+      boxLoadState.textContent = 'Loading current box status...';
+      boxLoadState.className = 'loading';
       try {
         const data = await requestBox(activeSubmission && activeSubmission.id);
         if (sequence !== refreshSequence) return;
