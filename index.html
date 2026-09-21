@@ -673,12 +673,13 @@
       message.className = 'message';
     }
 
-    function requestBoxByScript(requestId) {
+    function requestBoxByScript(requestId, receiptOnly = false) {
       return new Promise((resolve, reject) => {
         const callback = '__plBox' + Date.now() + '_' + (++readSequence);
         const script = document.createElement('script');
         const url = new URL(CONFIG_URL);
         url.searchParams.set('action', 'box');
+        if (receiptOnly) url.searchParams.set('receiptOnly', '1');
         url.searchParams.set('box', boxId);
         url.searchParams.set('callback', callback);
         url.searchParams.set('cb', Date.now());
@@ -696,7 +697,7 @@
       });
     }
 
-    function requestBoxByForm(requestId) {
+    function requestBoxByForm(requestId, receiptOnly = false) {
       return new Promise((resolve, reject) => {
         let readRequestId;
         try { readRequestId = newRequestId(); }
@@ -704,7 +705,12 @@
         const form = document.createElement('form');
         form.method = 'post';
         form.action = APP_ENDPOINT;
-        form.target = 'hiddenFrame';
+        // Each read has its own frame: never navigate away from an in-flight update
+        // or from another read while its postMessage response is pending.
+        const frame = document.createElement('iframe');
+        frame.name = 'boxRead-' + readRequestId;
+        frame.className = 'hidden';
+        form.target = frame.name;
         form.className = 'hidden';
         const fields = {
           readBoxSnapshot: '1',
@@ -712,6 +718,7 @@
           readRequestId,
           requestId: requestId || ''
         };
+        if (receiptOnly) fields.receiptOnly = '1';
         Object.entries(fields).forEach(([name, value]) => {
           const input = document.createElement('input');
           input.type = 'hidden';
@@ -722,14 +729,17 @@
         const timer = setTimeout(() => {
           pendingBoxReads.delete(readRequestId);
           form.remove();
+          frame.remove();
           reject(new Error('Form request timed out.'));
         }, 18000);
         pendingBoxReads.set(readRequestId, data => {
           clearTimeout(timer);
           pendingBoxReads.delete(readRequestId);
           form.remove();
+          frame.remove();
           resolve(data);
         });
+        document.body.appendChild(frame);
         document.body.appendChild(form);
         form.submit();
       });
@@ -739,6 +749,10 @@
       // Some phone browsers block the redirected Apps Script JSONP resource.
       // Use the form/iframe route only after that request fails to avoid doubling normal reads.
       return requestBoxByScript(requestId).catch(() => requestBoxByForm(requestId));
+    }
+
+    function requestReceipt(requestId) {
+      return requestBoxByScript(requestId, true).catch(() => requestBoxByForm(requestId, true));
     }
 
     function renderBox(box) {
@@ -886,7 +900,7 @@
       const submission = activeSubmission;
       if (!submission || !pendingSubmit) return;
       try {
-        const data = await requestBox(submission.id);
+        const data = await requestReceipt(submission.id);
         if (activeSubmission !== submission) return;
         if (data && data.receipt) {
           finishSubmission(data.receipt);
@@ -898,7 +912,7 @@
         receiptTimer = setTimeout(() => checkSubmission(attempt + 1), 4000);
       } else {
         submitButton.textContent = 'Awaiting confirmation';
-        showMessage('Update not confirmed. Tap Refresh to check again. Do not submit again; ask a manager if this continues.', 'error');
+        showMessage(`Update not confirmed. Tap Refresh to check again. Do not submit again; ask a manager if this continues. Reference: ${boxId} / ${submission.id}`, 'error');
       }
     }
 
@@ -1125,6 +1139,7 @@
         batchReceive.checked = false;
         repeatShred.checked = false;
         workMinutes.value = '';
+        updateWorkTimeVisibility();
         workTimePanel.classList.add('hidden');
         workTimeHint.classList.add('hidden');
         undoDescription.textContent = `This will change ${currentBox.currentStatus} back to ${currentBox.undoToStatus}. The matching date and work time will be cleared; location will not change.`;
@@ -1346,6 +1361,13 @@
         scannerHint.textContent = 'Use this after an update, or use the phone camera app if browser camera access is blocked.';
       }
     }
+
+    form.addEventListener('invalid', event => {
+      // Native validation happens before submit. Keep a visible explanation even
+      // when a mobile browser cannot focus the invalid control.
+      showMessage(event.target === undoReason ? 'Enter Reason for Undo, then press Confirm Undo.'
+        : 'Check the required fields before submitting.', 'error');
+    }, true);
 
     form.addEventListener('submit', event => {
       // Only submit explicitly after preparation succeeds, including storage and request ID creation.
