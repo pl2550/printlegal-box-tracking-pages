@@ -1005,7 +1005,14 @@
     }
 
     function getStoredName() {
-      return (localStorage.getItem(NAME_KEY) || '').trim();
+      const name = (localStorage.getItem(NAME_KEY) || '').trim();
+      // Remove the prior support-session name, without changing staff names
+      // or pending update receipts stored in this browser.
+      if (name === 'Codex (user-requested correction)') {
+        localStorage.removeItem(NAME_KEY);
+        return '';
+      }
+      return name;
     }
 
     function getDeviceToken() {
