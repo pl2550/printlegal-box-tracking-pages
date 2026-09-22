@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -469,8 +469,8 @@
             </div>
             <div id="workTimeHint" class="hint hidden">Required. Enter the total minutes spent on this box.</div>
             <div id="scanOutputPanel" class="hidden">
-              <div class="field-row"><label for="noOfImages">No. of Images</label><input id="noOfImages" name="noOfImages" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" placeholder="Optional"></div>
-              <div class="field-row"><label for="noOfFiles">No. of Files</label><input id="noOfFiles" name="noOfFiles" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" placeholder="Optional"></div>
+              <div class="field-row"><label for="noOfImages">No. of Images</label><input id="noOfImages" name="noOfImages" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" placeholder="Required (0 or greater)"></div>
+              <div class="field-row"><label for="noOfFiles">No. of Files</label><input id="noOfFiles" name="noOfFiles" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" placeholder="Required (0 or greater)"></div>
             </div>
             <div id="ocrPanel" class="check-row hidden">
               <input id="ocrCompleted" name="ocrCompleted" type="checkbox" value="1">
@@ -1087,6 +1087,8 @@
       const ocr = !undoMode && (scan || status.value === 'OCR Completed') && !(currentBox && currentBox.ocr);
       document.getElementById('scanOutputPanel').classList.toggle('hidden', !scan);
       document.getElementById('ocrPanel').classList.toggle('hidden', !ocr);
+      noOfImages.required = scan;
+      noOfFiles.required = scan;
       noOfImages.disabled = !scan;
       noOfFiles.disabled = !scan;
       ocrCompleted.disabled = !ocr;
@@ -1401,8 +1403,8 @@
       noOfImages.disabled = !scanFinish;
       noOfFiles.disabled = !scanFinish;
       ocrCompleted.disabled = customerOnly || undoMode || !['Scanned', 'OCR Completed'].includes(status.value) || Boolean(currentBox.ocr);
-      if (scanFinish && [noOfImages, noOfFiles].some(input => input.value.trim() && (!/^\d+$/.test(input.value.trim()) || !Number.isSafeInteger(Number(input.value))))) {
-        showMessage('Image and file counts must be non-negative whole numbers, or blank.', 'error');
+      if (scanFinish && [noOfImages, noOfFiles].some(input => !/^\d+$/.test(input.value.trim()) || !Number.isSafeInteger(Number(input.value)))) {
+        showMessage('Enter both page and file counts as whole numbers (0 or greater) to finish scanning.', 'error');
         return;
       }
       if (!customerOnly && !undoMode && status.value === 'OCR Completed' && !ocrCompleted.checked) {
