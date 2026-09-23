@@ -447,6 +447,8 @@
           <input type="hidden" name="updateScope" id="updateScope" value="Single Box">
           <input type="hidden" name="operation" id="operation" value="Update">
           <input type="hidden" name="requestId" id="requestId">
+          <input type="hidden" name="confirmationMode" id="confirmationMode">
+          <input type="hidden" name="clientVersion" value="2026.09.23.2">
           <input type="hidden" name="confirmClearCustomerBoxNumber" id="confirmClearCustomerBoxNumber" value="0">
           <input type="hidden" name="expectedCustomerBoxNumber" id="expectedCustomerBoxNumber">
 
@@ -550,12 +552,20 @@
       </div>
 
       <div id="message" class="message"></div>
+      <div id="pendingHelp" class="hidden">
+        <p id="pendingReference" class="hint"></p>
+        <a id="checkUpdatePage" target="_self">Open update result</a>
+        <button id="retrySameUpdate" type="button" class="full-secondary">Retry the same update</button>
+        <p class="hint">This reuses the original reference and input. Do not submit this box from another device while its result is unknown.</p>
+      </div>
     </section>
   </main>
 
   <iframe name="hiddenFrame" id="hiddenFrame"></iframe>
 
   <script>
+    const CLIENT_VERSION = '2026.09.23.2';
+    const useResultPage = /iPhone|iPad|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const NAME_KEY = 'printlegal.boxTracking.deviceName.v1';
     const TOKEN_KEY = 'printlegal.boxTracking.deviceToken.v1';
     const REPEAT_KEY = 'printlegal.boxTracking.repeatProcess.v1';
@@ -649,7 +659,9 @@
         const saved = JSON.parse(localStorage.getItem(pendingStorageKey) || 'null');
         if (!saved) return;
         if (!saved.id || !/^[a-zA-Z0-9-]{16,80}$/.test(saved.id)) throw new Error('Invalid saved request.');
+        if (saved.fields && saved.createdAt && Date.now() - saved.createdAt > 7 * 86400000) { delete saved.fields; localStorage.setItem(pendingStorageKey, JSON.stringify(saved)); }
         activeSubmission = saved;
+        showPendingHelp(saved, false);
         pendingSubmit = true;
         submitButton.disabled = true;
         scanNextButton.disabled = true;
@@ -662,6 +674,48 @@
         showMessage('Unable to recover the previous update. Ask a manager before submitting.', 'error');
       }
     }
+
+
+    function recordSubmissionStage(submission, stage) {
+      submission.stages = (submission.stages || []).concat([{stage, at:Date.now()}]).slice(-12);
+      try { localStorage.setItem(pendingStorageKey, JSON.stringify(submission)); } catch (_) { /* Original pending ID is already stored. */ }
+    }
+
+    function showPendingHelp(submission, canRetry) {
+      document.getElementById('pendingHelp').classList.remove('hidden');
+      document.getElementById('pendingReference').textContent = 'Box: ' + boxId + ' / Reference: ' + submission.id;
+      document.getElementById('checkUpdatePage').href = APP_ENDPOINT + '?action=receipt&box=' + encodeURIComponent(boxId) + '&requestId=' + encodeURIComponent(submission.id);
+      const fields = submission.fields;
+      const valid = Array.isArray(fields) && fields.every(pair => Array.isArray(pair) && pair.length === 2 && pair.every(v => typeof v === 'string'))
+        && fields.some(pair => pair[0] === 'requestId' && pair[1] === submission.id)
+        && fields.some(pair => pair[0] === 'boxId' && pair[1] === boxId);
+      document.getElementById('retrySameUpdate').disabled = !canRetry || !valid;
+    }
+
+    function restoreSubmissionInput(submission) {
+      if (!Array.isArray(submission.fields)) return;
+      const fields = new Map(submission.fields);
+      [['workMinutes',workMinutes],['noOfImages',noOfImages],['noOfFiles',noOfFiles],['notes',document.getElementById('notes')],['undoReason',undoReason]].forEach(([name,input]) => {
+        if (fields.has(name)) input.value = fields.get(name);
+      });
+      if (fields.has('ocrCompleted')) ocrCompleted.checked = fields.get('ocrCompleted') === '1';
+    }
+
+    document.getElementById('retrySameUpdate').addEventListener('click', () => {
+      if (!pendingSubmit || !activeSubmission || document.getElementById('retrySameUpdate').disabled) return;
+      const submission = activeSubmission;
+      showPendingHelp(submission, false);
+      const retry = document.createElement('form');
+      retry.method = 'post'; retry.action = APP_ENDPOINT; retry.target = '_self'; retry.className = 'hidden';
+      // Copy the original payload unchanged; only the response presentation changes.
+      submission.fields.forEach(([name,value]) => {
+        const input = document.createElement('input'); input.type = 'hidden'; input.name = name;
+        input.value = name === 'confirmationMode' ? 'page' : value; retry.appendChild(input);
+      });
+      document.body.appendChild(retry);
+      recordSubmissionStage(submission, 'retry_same_id');
+      try { retry.submit(); } catch (_) { showPendingHelp(submission, true); showMessage('Connection not confirmed. Check this update again before any new submission.', 'error'); }
+    });
 
     function showMessage(text, kind) {
       message.textContent = text;
@@ -908,11 +962,12 @@
         }
       } catch (error) { /* A slow response is not a successful update. */ }
       if (activeSubmission !== submission || !pendingSubmit) return;
-      if (attempt < 5) {
+      if (attempt < 2) {
         receiptTimer = setTimeout(() => checkSubmission(attempt + 1), 4000);
       } else {
-        submitButton.textContent = 'Awaiting confirmation';
-        showMessage(`Update not confirmed. Tap Refresh to check again. Do not submit again; ask a manager if this continues. Reference: ${boxId} / ${submission.id}`, 'error');
+        submitButton.textContent = 'Confirmation needed';
+        showPendingHelp(submission, !submission.needsReview);
+        showMessage(`Update not confirmed. Open the update result to check again. Use only Retry the same update if enabled. If unresolved, ask a manager. Reference: ${boxId} / ${submission.id}`, 'error');
       }
     }
 
@@ -936,13 +991,16 @@
 
     function finishSubmission(result) {
       if (!activeSubmission || result.requestId !== activeSubmission.id || result.boxId !== boxId || typeof result.ok !== 'boolean') return;
-      if (result.uncertain) {
+      if (result.uncertain || result.retryable) {
+        activeSubmission.needsReview = Boolean(result.uncertain && !result.retryable);
+        showPendingHelp(activeSubmission, Boolean(result.retryable));
         submitButton.textContent = 'Awaiting confirmation';
         showMessage(result.error || 'Update needs review. Do not submit again; ask a manager.', 'error');
         if (result.box) renderBox(result.box);
         return;
       }
       const submission = activeSubmission;
+      document.getElementById('pendingHelp').classList.add('hidden');
       activeSubmission = null;
       pendingSubmit = false;
       clearTimeout(receiptTimer);
@@ -975,6 +1033,7 @@
         showMessage('Update was not confirmed: ' + (result.error || 'Ask a manager to check the record.'), 'error');
       }
       if (!result.ok && result.box) renderBox(result.box);
+      if (!result.ok) restoreSubmissionInput(submission);
     }
 
     window.addEventListener('message', event => {
@@ -986,7 +1045,8 @@
       }
     });
     refreshBoxButton.addEventListener('click', refreshBox);
-    window.addEventListener('pageshow', event => { if (event.persisted) refreshBox(); });
+    window.addEventListener('pageshow', event => { if (event.persisted) { refreshBox(); if (pendingSubmit) { clearTimeout(receiptTimer); checkSubmission(0); } } });
+    document.addEventListener('visibilitychange', () => { if (activeSubmission) recordSubmissionStage(activeSubmission, document.hidden ? 'hidden' : 'visible'); });
 
     function setLocationOptions(locations, currentLocation) {
       const activeLocations = locations;
@@ -1481,10 +1541,16 @@
         scope: updateScope.value,
         operation: operation.value,
         status: status.value,
-        workMinutes: workMinutes.value.trim()
+        workMinutes: workMinutes.value.trim(),
+        createdAt: Date.now(),
+        clientVersion: CLIENT_VERSION
       };
       try {
         submission.id = newRequestId();
+        requestIdField.value = submission.id;
+        document.getElementById('confirmationMode').value = useResultPage ? 'page' : 'iframe';
+        submission.fields = Array.from(new FormData(form).entries()).map(([key,value]) => [key,String(value)]);
+        submission.stages = [{stage:'prepared', at:Date.now()}];
         localStorage.setItem(pendingStorageKey, JSON.stringify(submission));
       } catch (error) {
         showMessage('Unable to prepare a safe update. Nothing was submitted. Check browser storage or ask a manager.', 'error');
@@ -1497,7 +1563,9 @@
       scanNextButton.disabled = true;
       submitButton.textContent = 'Submitting...';
       receiptTimer = setTimeout(() => checkSubmission(0), 4000);
-      form.submit();
+      recordSubmissionStage(submission, 'dispatch');
+      form.target = useResultPage ? '_self' : 'hiddenFrame';
+      try { form.submit(); } catch (_) { showPendingHelp(submission, true); showMessage('Unable to confirm submission. Use Open update result or Retry the same update.', 'error'); }
     });
   </script>
 </body>
