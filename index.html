@@ -840,7 +840,7 @@
         ? 'Approved - ' + box.customerApprovedDate : 'Pending';
       document.getElementById('lastUpdated').textContent = box.lastUpdated || 'Not recorded';
       document.getElementById('lastUpdated').title = box.timezone || '';
-      document.getElementById('boxBlockedReason').textContent = box.isFinal ? 'Final status recorded.' : box.blockedReason || '';
+      document.getElementById('boxBlockedReason').textContent = box.blockedReason || (box.isFinal ? 'Final status recorded.' : box.labelUse === 'Reserve' ? 'Reserve label. Confirm Received only when this label is attached to a real box.' : '');
       boxDetails.classList.remove('hidden');
       boxLoadState.textContent = '';
       boxLoadState.className = '';
@@ -1172,7 +1172,7 @@
       }
       const action = status.value ? actionLabelForStatus(status.value) : '';
       submitButton.textContent = action || 'No status action available';
-      nextActionText.textContent = action || (currentBox && currentBox.isFinal ? 'Completed' : 'Waiting for the next required step');
+      nextActionText.textContent = action || (currentBox && currentBox.labelUse === 'Unused' ? 'Unused label - closed' : currentBox && currentBox.isFinal ? 'Completed' : 'Waiting for the next required step');
     }
 
     function updateCustomerBoxNumberButton() {
