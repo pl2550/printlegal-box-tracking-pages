@@ -554,6 +554,7 @@
       <div id="message" class="message"></div>
       <div id="pendingHelp" class="hidden">
         <p id="pendingReference" class="hint"></p>
+        <button id="checkPendingUpdate" type="button" class="secondary">Check save result again</button>
         <a id="checkUpdatePage" target="_self">Open update result</a>
         <button id="retrySameUpdate" type="button" class="full-secondary">Retry the same update</button>
         <p class="hint">This reuses the original reference and input. Do not submit this box from another device while its result is unknown.</p>
@@ -564,7 +565,7 @@
   <iframe name="hiddenFrame" id="hiddenFrame"></iframe>
 
   <script>
-    const CLIENT_VERSION = '2026.09.23.2';
+    const CLIENT_VERSION = '2026.11.16.1';
     const useResultPage = /iPhone|iPad|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const NAME_KEY = 'printlegal.boxTracking.deviceName.v1';
     const TOKEN_KEY = 'printlegal.boxTracking.deviceToken.v1';
@@ -640,6 +641,8 @@
     let readSequence = 0;
     let refreshSequence = 0;
     let receiptTimer;
+    let receiptCheckActive = null;
+    const CONFIRMATION_DELAYS = [3000, 6000, 12000];
     let html5QrCode = null;
     let scannerActive = false;
     let scanLocked = false;
@@ -665,7 +668,7 @@
         pendingSubmit = true;
         submitButton.disabled = true;
         scanNextButton.disabled = true;
-        submitButton.textContent = 'Awaiting confirmation';
+        submitButton.textContent = 'Save result not confirmed';
         showMessage('Checking the previous update. Do not submit it again.', 'error');
         receiptTimer = setTimeout(() => checkSubmission(0), 4000);
       } catch (error) {
@@ -684,7 +687,7 @@
     function showPendingHelp(submission, canRetry) {
       document.getElementById('pendingHelp').classList.remove('hidden');
       document.getElementById('pendingReference').textContent = 'Box: ' + boxId + ' / Reference: ' + submission.id;
-      document.getElementById('checkUpdatePage').href = APP_ENDPOINT + '?action=receipt&box=' + encodeURIComponent(boxId) + '&requestId=' + encodeURIComponent(submission.id);
+      document.getElementById('checkUpdatePage').href = 'result.html?box=' + encodeURIComponent(boxId) + '&requestId=' + encodeURIComponent(submission.id);
       const fields = submission.fields;
       const valid = Array.isArray(fields) && fields.every(pair => Array.isArray(pair) && pair.length === 2 && pair.every(v => typeof v === 'string'))
         && fields.some(pair => pair[0] === 'requestId' && pair[1] === submission.id)
@@ -950,26 +953,50 @@
       }
     }
 
-    async function checkSubmission(attempt) {
+    async function checkSubmission(attempt = 0) {
       const submission = activeSubmission;
-      if (!submission || !pendingSubmit) return;
+      if (!submission || !pendingSubmit || receiptCheckActive === submission) return;
+      clearTimeout(receiptTimer);
+      receiptCheckActive = submission;
+      document.getElementById('checkPendingUpdate').disabled = true;
+      showPendingHelp(submission, false);
+      submitButton.textContent = 'Checking save result...';
+      let lookupReachedServer = false;
+      let canRetry = false;
       try {
         const data = await requestReceipt(submission.id);
         if (activeSubmission !== submission) return;
+        lookupReachedServer = Boolean(data && data.ok === true);
         if (data && data.receipt) {
           finishSubmission(data.receipt);
           if (!pendingSubmit) return;
+          canRetry = data.receipt.requestId === submission.id && data.receipt.boxId === boxId
+            && data.receipt.retryable === true && !submission.needsReview;
+        } else if (lookupReachedServer) {
+          canRetry = !submission.needsReview;
         }
-      } catch (error) { /* A slow response is not a successful update. */ }
+      } catch (_) { /* A transport failure is neither a successful update nor proof of no write. */ }
+      finally {
+        if (receiptCheckActive === submission) receiptCheckActive = null;
+        document.getElementById('checkPendingUpdate').disabled = false;
+      }
       if (activeSubmission !== submission || !pendingSubmit) return;
-      if (attempt < 2) {
-        receiptTimer = setTimeout(() => checkSubmission(attempt + 1), 4000);
+      if (attempt < CONFIRMATION_DELAYS.length) {
+        showMessage(`Save result not confirmed yet. Checking again (${attempt + 1}/${CONFIRMATION_DELAYS.length + 1}). Keep this screen open; do not submit from another device.`, 'error');
+        receiptTimer = setTimeout(() => checkSubmission(attempt + 1), CONFIRMATION_DELAYS[attempt]);
       } else {
-        submitButton.textContent = 'Confirmation needed';
-        showPendingHelp(submission, !submission.needsReview);
-        showMessage(`Update not confirmed. Open the update result to check again. Use only Retry the same update if enabled. If unresolved, ask a manager. Reference: ${boxId} / ${submission.id}`, 'error');
+        submitButton.textContent = 'Save result not confirmed';
+        showPendingHelp(submission, canRetry);
+        const explanation = submission.needsReview
+          ? 'This update is still processing or needs manager review. Do not resubmit. Check the save result again or give this reference to a manager.'
+          : lookupReachedServer
+          ? 'Google responded, but this update has no confirmed save result. This does not prove that it failed. Use Retry the same update only if enabled.'
+          : 'Unable to reach Google to check the save result. Nothing has been resent. Use Check save result again when the connection recovers.';
+        showMessage(`${explanation} Keep the original screen; do not send a new update from another device. Reference: ${boxId} / ${submission.id}`, 'error');
       }
     }
+
+    document.getElementById('checkPendingUpdate').addEventListener('click', () => checkSubmission(0));
 
     function successMessageForSubmission(submission, result) {
       if (submission.operation === 'Undo Last Status') {
@@ -994,7 +1021,7 @@
       if (result.uncertain || result.retryable) {
         activeSubmission.needsReview = Boolean(result.uncertain && !result.retryable);
         showPendingHelp(activeSubmission, Boolean(result.retryable));
-        submitButton.textContent = 'Awaiting confirmation';
+        submitButton.textContent = 'Save result not confirmed';
         showMessage(result.error || 'Update needs review. Do not submit again; ask a manager.', 'error');
         if (result.box) renderBox(result.box);
         return;
@@ -1046,7 +1073,12 @@
     });
     refreshBoxButton.addEventListener('click', refreshBox);
     window.addEventListener('pageshow', event => { if (event.persisted) { refreshBox(); if (pendingSubmit) { clearTimeout(receiptTimer); checkSubmission(0); } } });
-    document.addEventListener('visibilitychange', () => { if (activeSubmission) recordSubmissionStage(activeSubmission, document.hidden ? 'hidden' : 'visible'); });
+    document.addEventListener('visibilitychange', () => {
+      if (activeSubmission) {
+        recordSubmissionStage(activeSubmission, document.hidden ? 'hidden' : 'visible');
+        if (!document.hidden && pendingSubmit) checkSubmission(0);
+      }
+    });
 
     function setLocationOptions(locations, currentLocation) {
       const activeLocations = locations;
@@ -1217,7 +1249,7 @@
       } else {
         undoReason.value = '';
         undoReason.required = false;
-        submitButton.textContent = pendingSubmit ? 'Awaiting confirmation' : 'Submit Update';
+        submitButton.textContent = pendingSubmit ? 'Save result not confirmed' : 'Submit Update';
         updateBatchVisibility();
         updateRepeatVisibility();
         updateWorkTimeVisibility();

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Update result | Printlegal</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#18243b;font:18px/1.55 system-ui,sans-serif}
+    main{max-width:620px;margin:32px auto;padding:28px;background:white;border:1px solid #d7dfec;border-radius:16px}
+    .brand{font-size:14px;font-weight:700;letter-spacing:.08em;color:#57657a}h1{font-size:28px;line-height:1.25;margin:16px 0}
+    p{overflow-wrap:anywhere}.reference{font-size:14px;color:#526078;border-top:1px solid #d7dfec;padding-top:18px}
+    button,a{display:block;width:100%;padding:14px 18px;margin:14px 0;border-radius:9px;font:600 17px/1.3 system-ui;text-align:center}
+    button{background:#1559b7;border:1px solid #1559b7;color:white;cursor:pointer}button:disabled{opacity:.55;cursor:wait}
+    a{background:white;color:#1559b7;border:1px solid #1559b7;text-decoration:none}.success{color:#137333}.warning{color:#8a4b00}.hidden{display:none}
+    @media(max-width:650px){main{margin:12px;padding:22px}h1{font-size:26px}}
+  </style>
+</head>
+<body><main>
+  <div class="brand">PRINTLEGAL · BOX TRACKING</div>
+  <h1 id="resultTitle" aria-live="polite">Checking save result...</h1>
+  <p id="resultDetail">This page checks an existing update. It never submits a new box update.</p>
+  <p id="resultAdvice">Keep your original box screen until the result is confirmed.</p>
+  <button id="checkAgain" type="button">Check save result again</button>
+  <a id="returnLink" class="hidden">Return to original box screen</a>
+  <p id="reference" class="reference"></p>
+</main>
+<script>
+  'use strict';
+  const ENDPOINT = 'https://script.google.com/macros/s/AKfycbxo_vq27ZS6rycqLOmLbcgZa9fUtX2TGSufJ8yl1jPRCF-MGqHZnUSjHyZBW-eX5YHHBQ/exec';
+  const params = new URLSearchParams(location.search);
+  const boxId = params.get('box') || '', requestId = params.get('requestId') || '';
+  const title = document.getElementById('resultTitle'), detail = document.getElementById('resultDetail');
+  const advice = document.getElementById('resultAdvice'), button = document.getElementById('checkAgain');
+  const returnLink = document.getElementById('returnLink');
+  const delays = [3000, 6000, 12000];
+  let sequence = 0, busy = false, timer, settled = false;
+  const pendingReads = new Map();
+  function readByScript() {
+    return new Promise((resolve,reject) => {
+      const callback = '__plResult' + Date.now() + '_' + (++sequence), script = document.createElement('script');
+      const url = new URL(ENDPOINT);
+      for (const [key,value] of Object.entries({action:'box',receiptOnly:'1',box:boxId,requestId,callback,cb:String(Date.now())})) url.searchParams.set(key,value);
+      const cleanup = () => { clearTimeout(timeout); script.remove(); delete window[callback]; };
+      const timeout = setTimeout(() => { cleanup(); reject(new Error('Read timeout')); }, 10000);
+      window[callback] = data => { cleanup(); resolve(data); };
+      script.onerror = () => { cleanup(); reject(new Error('Connection failed')); };
+      script.src = url.toString(); document.head.appendChild(script);
+    });
+  }
+  function readByForm() {
+    return new Promise((resolve,reject) => {
+      const readRequestId = 'read-' + Date.now() + '-' + (++sequence);
+      const frame = document.createElement('iframe'), form = document.createElement('form');
+      frame.name = 'result-' + readRequestId; frame.className = 'hidden';
+      form.method = 'post'; form.action = ENDPOINT; form.target = frame.name; form.className = 'hidden';
+      // Existing server route is read-only and returns before the mutation dispatcher.
+      for (const [name,value] of Object.entries({readBoxSnapshot:'1',receiptOnly:'1',boxId,requestId,readRequestId})) {
+        const input = document.createElement('input'); input.type = 'hidden'; input.name = name; input.value = value; form.appendChild(input);
+      }
+      const cleanup = () => { clearTimeout(timeout); pendingReads.delete(readRequestId); form.remove(); frame.remove(); };
+      const timeout = setTimeout(() => { cleanup(); reject(new Error('Read timeout')); },18000);
+      pendingReads.set(readRequestId, data => { cleanup(); resolve(data); });
+      document.body.appendChild(frame); document.body.appendChild(form);
+      try { form.submit(); } catch (error) { cleanup(); reject(error); }
+    });
+  }
+  window.addEventListener('message',event => {
+    if (!/^https:\/\/(?:script\.google\.com|[a-z0-9-]+-script\.googleusercontent\.com)$/.test(event.origin)) return;
+    const data = event.data;
+    if (!data || data.type !== 'printlegal-box-read-result' || data.boxId !== boxId) return;
+    const resolve = pendingReads.get(data.readRequestId); if (resolve) resolve(data);
+  });
+  function readReceipt() { return readByScript().catch(() => readByForm()); }
+  async function checkResult(attempt = 0) {
+    if (busy || settled) return;
+    clearTimeout(timer); busy = true; button.disabled = true;
+    title.textContent = 'Checking save result...'; title.className = '';
+    let reached = false;
+    try {
+      const data = await readReceipt(); reached = Boolean(data && data.ok === true);
+      const receipt = data && data.receipt;
+      if (receipt && receipt.boxId === boxId && receipt.requestId === requestId && typeof receipt.ok === 'boolean') {
+        if (receipt.ok === true) {
+          settled = true; title.textContent = 'Update saved'; title.className = 'success';
+          detail.textContent = 'The server confirmed that this exact update was saved. Do not submit it again.';
+          advice.textContent = 'Return to the original box screen and refresh to see the latest status.'; return;
+        }
+        if (!receipt.uncertain && !receipt.retryable) {
+          settled = true; title.textContent = 'Update not saved'; title.className = 'warning';
+          detail.textContent = receipt.error || 'The server rejected this update.';
+          advice.textContent = 'Return to the original box screen and review the message before continuing.'; return;
+        }
+        if (receipt.uncertain && !receipt.retryable) {
+          title.textContent = 'Processing or manager review needed'; title.className = 'warning';
+          detail.textContent = receipt.error || 'This update may still be processing or may need review.';
+          advice.textContent = 'Do not resubmit. You can check again, or give the reference below to a manager.';
+        } else {
+          title.textContent = 'Save result not confirmed'; title.className = 'warning';
+          detail.textContent = receipt.error || 'The server could not complete this request yet.';
+        }
+      } else {
+        title.textContent = 'Save result not confirmed'; title.className = 'warning';
+        detail.textContent = reached
+          ? 'Google responded, but there is no confirmed result for this reference. This does not prove that the update failed.'
+          : 'The server did not return a usable save result.';
+      }
+    } catch (_) {
+      title.textContent = 'Google connection interrupted'; title.className = 'warning';
+      detail.textContent = 'The save result could not be checked. This page has not resent your update.';
+    } finally { busy = false; button.disabled = settled; }
+    if (attempt < delays.length) {
+      advice.textContent = `Checking again shortly (${attempt + 1}/${delays.length + 1}). Keep your original box screen.`;
+      timer = setTimeout(() => checkResult(attempt + 1), delays[attempt]);
+    } else {
+      advice.textContent = 'Automatic checks have stopped. Use Check save result again. Do not create a new update on another device; ask a manager if the result remains unknown.';
+    }
+  }
+  button.addEventListener('click',() => checkResult(0));
+  const valid = /^PL-BOX-\d{5,}$/.test(boxId) && /^[a-zA-Z0-9-]{16,80}$/.test(requestId);
+  if (valid) {
+    document.getElementById('reference').textContent = 'Box: ' + boxId + ' / Reference: ' + requestId;
+    returnLink.href = './?box=' + encodeURIComponent(boxId); returnLink.className = '';
+    checkResult();
+  } else {
+    title.textContent = 'Invalid update reference'; title.className = 'warning';
+    detail.textContent = 'Open this page using Open update result on your original box screen.';
+    advice.textContent = 'No request was sent.'; button.disabled = true;
+  }
+</script></body></html>
