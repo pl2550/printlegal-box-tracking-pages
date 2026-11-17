@@ -22,6 +22,8 @@
   <p id="resultDetail">This page checks an existing update. It never submits a new box update.</p>
   <p id="resultAdvice">Keep your original box screen until the result is confirmed.</p>
   <button id="checkAgain" type="button">Check save result again</button>
+  <button id="recoverBox" type="button" class="hidden">Recover this box</button>
+  <p id="recoveryHelp" class="hidden">Recover keeps saved work. If the old update never arrived, it cancels that reference so you can start again. Wait for confirmation before submitting a new update.</p>
   <a id="returnLink" class="hidden">Return to original box screen</a>
   <p id="reference" class="reference"></p>
 </main>
@@ -33,6 +35,7 @@
   const title = document.getElementById('resultTitle'), detail = document.getElementById('resultDetail');
   const advice = document.getElementById('resultAdvice'), button = document.getElementById('checkAgain');
   const returnLink = document.getElementById('returnLink');
+  const recoverButton = document.getElementById('recoverBox');
   const delays = [3000, 6000, 12000];
   let sequence = 0, busy = false, timer, settled = false;
   const pendingReads = new Map();
@@ -87,7 +90,7 @@
           advice.textContent = 'Return to the original box screen and refresh to see the latest status.'; return;
         }
         if (!receipt.uncertain && !receipt.retryable) {
-          settled = true; title.textContent = 'Update not saved'; title.className = 'warning';
+          settled = true; title.textContent = receipt.cancelled ? 'Old pending update cancelled' : 'Update not saved'; title.className = 'warning';
           detail.textContent = receipt.error || 'The server rejected this update.';
           advice.textContent = 'Return to the original box screen and review the message before continuing.'; return;
         }
@@ -108,7 +111,7 @@
     } catch (_) {
       title.textContent = 'Google connection interrupted'; title.className = 'warning';
       detail.textContent = 'The save result could not be checked. This page has not resent your update.';
-    } finally { busy = false; button.disabled = settled; }
+    } finally { busy = false; button.disabled = settled; if (settled) recoverButton.disabled = true; }
     if (attempt < delays.length) {
       advice.textContent = `Checking again shortly (${attempt + 1}/${delays.length + 1}). Keep your original box screen.`;
       timer = setTimeout(() => checkResult(attempt + 1), delays[attempt]);
@@ -117,8 +120,26 @@
     }
   }
   button.addEventListener('click',() => checkResult(0));
+  let recoveryBusy = false;
+  recoverButton.addEventListener('click',() => {
+    if (!valid || settled || recoveryBusy) return;
+    recoveryBusy = true; recoverButton.disabled = true;
+    const frame = document.createElement('iframe'), form = document.createElement('form');
+    frame.name = 'recover-' + Date.now(); frame.className = 'hidden';
+    form.method = 'post'; form.action = ENDPOINT; form.target = frame.name; form.className = 'hidden';
+    for (const [name,value] of Object.entries({recoverPendingRequest:'1',boxId,requestId})) {
+      const input = document.createElement('input'); input.type = 'hidden'; input.name = name; input.value = value; form.appendChild(input);
+    }
+    document.body.appendChild(frame); document.body.appendChild(form);
+    advice.textContent = 'Recovery requested. Waiting for the server to confirm. Saved work will be kept.';
+    try { form.submit(); } catch (_) { /* Safe to repeat this recovery with the same reference. */ }
+    setTimeout(() => { recoveryBusy = false; recoverButton.disabled = settled; checkResult(0); },4000);
+    // Keep the POST frame alive long enough for the server; cleanup is independent of read polling.
+    setTimeout(() => { form.remove(); frame.remove(); },120000);
+  });
   const valid = /^PL-BOX-\d{5,}$/.test(boxId) && /^[a-zA-Z0-9-]{16,80}$/.test(requestId);
   if (valid) {
+    recoverButton.className = ''; document.getElementById('recoveryHelp').className = '';
     document.getElementById('reference').textContent = 'Box: ' + boxId + ' / Reference: ' + requestId;
     returnLink.href = './?box=' + encodeURIComponent(boxId); returnLink.className = '';
     checkResult();

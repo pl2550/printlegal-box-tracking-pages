@@ -554,8 +554,11 @@
       <div id="message" class="message"></div>
       <div id="pendingHelp" class="hidden">
         <p id="pendingReference" class="hint"></p>
+        <p id="pendingAction" class="hint"></p>
         <button id="checkPendingUpdate" type="button" class="secondary">Check save result again</button>
         <a id="checkUpdatePage" target="_self">Open update result</a>
+        <button id="recoverPendingUpdate" type="button" class="full-secondary">Recover this box</button>
+        <p class="hint">Recover checks the saved result. If the old update never arrived, it cancels that update so you can start again. Saved work is kept. An update needing manager review stays blocked.</p>
         <button id="retrySameUpdate" type="button" class="full-secondary">Retry the same update</button>
         <p class="hint">This reuses the original reference and input. Do not submit this box from another device while its result is unknown.</p>
       </div>
@@ -565,7 +568,7 @@
   <iframe name="hiddenFrame" id="hiddenFrame"></iframe>
 
   <script>
-    const CLIENT_VERSION = '2026.11.16.1';
+    const CLIENT_VERSION = '2026.11.17.1';
     const useResultPage = /iPhone|iPad|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const NAME_KEY = 'printlegal.boxTracking.deviceName.v1';
     const TOKEN_KEY = 'printlegal.boxTracking.deviceToken.v1';
@@ -642,6 +645,7 @@
     let refreshSequence = 0;
     let receiptTimer;
     let receiptCheckActive = null;
+    let recoverySending = false;
     const CONFIRMATION_DELAYS = [3000, 6000, 12000];
     let html5QrCode = null;
     let scannerActive = false;
@@ -685,14 +689,21 @@
     }
 
     function showPendingHelp(submission, canRetry) {
+      nextActionText.textContent = 'Resolve previous update first';
       document.getElementById('pendingHelp').classList.remove('hidden');
       document.getElementById('pendingReference').textContent = 'Box: ' + boxId + ' / Reference: ' + submission.id;
+      const originalFields = new Map(Array.isArray(submission.fields) ? submission.fields : []);
+      const actionNames = {Prep:'Start Prep',Prepped:'Finish Prep',Scanning:'Start Scanning','In Scanning':'Finish Scanning'};
+      const action = originalFields.get('operation') !== 'Update' && originalFields.get('operation')
+        ? originalFields.get('operation') : actionNames[originalFields.get('newStatus')] || originalFields.get('newStatus') || 'Previous update';
+      document.getElementById('pendingAction').textContent = 'Unconfirmed action: ' + action + (submission.recoveryRequested ? ' — recovery requested' : '');
+      document.getElementById('recoverPendingUpdate').disabled = recoverySending;
       document.getElementById('checkUpdatePage').href = 'result.html?box=' + encodeURIComponent(boxId) + '&requestId=' + encodeURIComponent(submission.id);
       const fields = submission.fields;
       const valid = Array.isArray(fields) && fields.every(pair => Array.isArray(pair) && pair.length === 2 && pair.every(v => typeof v === 'string'))
         && fields.some(pair => pair[0] === 'requestId' && pair[1] === submission.id)
         && fields.some(pair => pair[0] === 'boxId' && pair[1] === boxId);
-      document.getElementById('retrySameUpdate').disabled = !canRetry || !valid;
+      document.getElementById('retrySameUpdate').disabled = !canRetry || !valid || Boolean(submission.recoveryRequested);
     }
 
     function restoreSubmissionInput(submission) {
@@ -717,7 +728,29 @@
       });
       document.body.appendChild(retry);
       recordSubmissionStage(submission, 'retry_same_id');
+      // A blocked/failed navigation must not leave this page permanently disabled.
+      clearTimeout(receiptTimer);
+      receiptTimer = setTimeout(() => checkSubmission(0), 4000);
       try { retry.submit(); } catch (_) { showPendingHelp(submission, true); showMessage('Connection not confirmed. Check this update again before any new submission.', 'error'); }
+    });
+
+    document.getElementById('recoverPendingUpdate').addEventListener('click', () => {
+      if (!pendingSubmit || !activeSubmission || recoverySending) return;
+      const submission = activeSubmission;
+      submission.recoveryRequested = true;
+      recordSubmissionStage(submission, 'recovery_requested');
+      recoverySending = true;
+      showPendingHelp(submission, false);
+      const recovery = document.createElement('form');
+      recovery.method = 'post'; recovery.action = APP_ENDPOINT; recovery.target = 'hiddenFrame'; recovery.className = 'hidden';
+      for (const [name,value] of Object.entries({recoverPendingRequest:'1',boxId,requestId:submission.id})) {
+        const input = document.createElement('input'); input.type = 'hidden'; input.name = name; input.value = value; recovery.appendChild(input);
+      }
+      document.body.appendChild(recovery);
+      showMessage('Recovering the previous update. Saved work will be kept. Wait for confirmation before starting a new update.', 'error');
+      try { recovery.submit(); } catch (_) { /* Recovery may be repeated safely with the same ID. */ }
+      clearTimeout(receiptTimer);
+      setTimeout(() => { recoverySending = false; recovery.remove(); if (activeSubmission === submission && pendingSubmit) checkSubmission(0); }, 4000);
     });
 
     function showMessage(text, kind) {
@@ -991,8 +1024,9 @@
           ? 'This update is still processing or needs manager review. Do not resubmit. Check the save result again or give this reference to a manager.'
           : lookupReachedServer
           ? 'Google responded, but this update has no confirmed save result. This does not prove that it failed. Use Retry the same update only if enabled.'
-          : 'Unable to reach Google to check the save result. Nothing has been resent. Use Check save result again when the connection recovers.';
-        showMessage(`${explanation} Keep the original screen; do not send a new update from another device. Reference: ${boxId} / ${submission.id}`, 'error');
+          : 'Unable to reach Google to check the save result. Use Check save result again when the connection recovers.';
+        const recoveryAdvice = ' If this old update is blocking your work, use Recover this box. Wait for confirmation; it does not undo saved work.';
+        showMessage(`${explanation}${recoveryAdvice} Keep the original screen; do not send a new update from another device. Reference: ${boxId} / ${submission.id}`, 'error');
       }
     }
 
@@ -1027,6 +1061,7 @@
         return;
       }
       const submission = activeSubmission;
+      recoverySending = false;
       document.getElementById('pendingHelp').classList.add('hidden');
       activeSubmission = null;
       pendingSubmit = false;
@@ -1057,9 +1092,21 @@
         if (result.box) renderBox(result.box);
         refreshBox({afterConfirmedSave: true, savedMessage});
       } else {
-        showMessage('Update was not confirmed: ' + (result.error || 'Ask a manager to check the record.'), 'error');
+        const recoveryMessage = result.cancelled
+          ? 'Old pending update cancelled. Saved work was kept. Review the latest status and enter the update you need now.'
+          : 'Update not saved: ' + (result.error || 'Ask a manager to check the record.');
+        showMessage(recoveryMessage, result.cancelled ? 'ok' : 'error');
+        operation.value = 'Update';
+        updateScope.value = 'Single Box';
+        // A receipt-only lookup has no box snapshot. Never unlock using the
+        // pre-request status, including after a rejected stale Start Prep.
+        refreshBox().then(loaded => {
+          if (loaded) {
+            restoreSubmissionInput(submission);
+            showMessage(recoveryMessage, result.cancelled ? 'ok' : 'error');
+          }
+        });
       }
-      if (!result.ok && result.box) renderBox(result.box);
       if (!result.ok) restoreSubmissionInput(submission);
     }
 
