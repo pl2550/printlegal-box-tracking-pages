@@ -21,9 +21,7 @@
   <h1 id="resultTitle" aria-live="polite">Checking save result...</h1>
   <p id="resultDetail">This page checks an existing update. It never submits a new box update.</p>
   <p id="resultAdvice">Keep your original box screen until the result is confirmed.</p>
-  <button id="checkAgain" type="button">Check save result again</button>
-  <button id="recoverBox" type="button" class="hidden">Recover this box</button>
-  <p id="recoveryHelp" class="hidden">Recover keeps saved work. If the old update never arrived, it cancels that reference so you can start again. Wait for confirmation before submitting a new update.</p>
+  <button id="checkAgain" type="button">Recheck</button>
   <a id="returnLink" class="hidden">Return to original box screen</a>
   <p id="reference" class="reference"></p>
 </main>
@@ -35,9 +33,9 @@
   const title = document.getElementById('resultTitle'), detail = document.getElementById('resultDetail');
   const advice = document.getElementById('resultAdvice'), button = document.getElementById('checkAgain');
   const returnLink = document.getElementById('returnLink');
-  const recoverButton = document.getElementById('recoverBox');
   const delays = [3000, 6000, 12000];
   let sequence = 0, busy = false, timer, settled = false;
+  let recoveryBusy = false, autoRecoveryAttempted = false;
   const pendingReads = new Map();
   function readByScript() {
     return new Promise((resolve,reject) => {
@@ -76,10 +74,10 @@
   });
   function readReceipt() { return readByScript().catch(() => readByForm()); }
   async function checkResult(attempt = 0) {
-    if (busy || settled) return;
+    if (busy || settled || recoveryBusy) return;
     clearTimeout(timer); busy = true; button.disabled = true;
     title.textContent = 'Checking save result...'; title.className = '';
-    let reached = false;
+    let reached = false, recoverable = false;
     try {
       const data = await readReceipt(); reached = Boolean(data && data.ok === true);
       const receipt = data && data.receipt;
@@ -97,33 +95,35 @@
         if (receipt.uncertain && !receipt.retryable) {
           title.textContent = 'Processing or manager review needed'; title.className = 'warning';
           detail.textContent = receipt.error || 'This update may still be processing or may need review.';
-          advice.textContent = 'Do not resubmit. You can check again, or give the reference below to a manager.';
+          advice.textContent = 'Tap Recheck. If this remains blocked, give the reference below to a manager.';
         } else {
+          recoverable = reached && receipt.retryable === true;
           title.textContent = 'Save result not confirmed'; title.className = 'warning';
           detail.textContent = receipt.error || 'The server could not complete this request yet.';
         }
       } else {
+        recoverable = reached && !receipt;
         title.textContent = 'Save result not confirmed'; title.className = 'warning';
         detail.textContent = reached
-          ? 'Google responded, but there is no confirmed result for this reference. This does not prove that the update failed.'
+          ? 'Checking the previous update and the latest status.'
           : 'The server did not return a usable save result.';
       }
     } catch (_) {
       title.textContent = 'Google connection interrupted'; title.className = 'warning';
       detail.textContent = 'The save result could not be checked. This page has not resent your update.';
-    } finally { busy = false; button.disabled = settled; if (settled) recoverButton.disabled = true; }
+    } finally { busy = false; button.disabled = settled; }
+    if (recoverable && attempt >= delays.length && recoverAutomatically()) return;
     if (attempt < delays.length) {
       advice.textContent = `Checking again shortly (${attempt + 1}/${delays.length + 1}). Keep your original box screen.`;
       timer = setTimeout(() => checkResult(attempt + 1), delays[attempt]);
     } else {
-      advice.textContent = 'Automatic checks have stopped. Use Check save result again. Do not create a new update on another device; ask a manager if the result remains unknown.';
+      advice.textContent = reached ? 'Tap Recheck to continue. If the result remains blocked, give the reference below to a manager.' : 'Cannot connect to Google. Tap Recheck when the connection is available.';
     }
   }
-  button.addEventListener('click',() => checkResult(0));
-  let recoveryBusy = false;
-  recoverButton.addEventListener('click',() => {
-    if (!valid || settled || recoveryBusy) return;
-    recoveryBusy = true; recoverButton.disabled = true;
+  button.addEventListener('click',() => { if (busy || recoveryBusy) return; autoRecoveryAttempted = false; checkResult(0); });
+  function recoverAutomatically() {
+    if (!valid || settled || recoveryBusy || autoRecoveryAttempted) return false;
+    autoRecoveryAttempted = true; recoveryBusy = true; button.disabled = true;
     const frame = document.createElement('iframe'), form = document.createElement('form');
     frame.name = 'recover-' + Date.now(); frame.className = 'hidden';
     form.method = 'post'; form.action = ENDPOINT; form.target = frame.name; form.className = 'hidden';
@@ -131,15 +131,16 @@
       const input = document.createElement('input'); input.type = 'hidden'; input.name = name; input.value = value; form.appendChild(input);
     }
     document.body.appendChild(frame); document.body.appendChild(form);
-    advice.textContent = 'Recovery requested. Waiting for the server to confirm. Saved work will be kept.';
+    advice.textContent = 'Loading the latest status. Saved work will be kept.';
     try { form.submit(); } catch (_) { /* Safe to repeat this recovery with the same reference. */ }
-    setTimeout(() => { recoveryBusy = false; recoverButton.disabled = settled; checkResult(0); },4000);
+    clearTimeout(timer);
+    setTimeout(() => { recoveryBusy = false; checkResult(0); },4000);
     // Keep the POST frame alive long enough for the server; cleanup is independent of read polling.
     setTimeout(() => { form.remove(); frame.remove(); },120000);
-  });
+    return true;
+  }
   const valid = /^PL-BOX-\d{5,}$/.test(boxId) && /^[a-zA-Z0-9-]{16,80}$/.test(requestId);
   if (valid) {
-    recoverButton.className = ''; document.getElementById('recoveryHelp').className = '';
     document.getElementById('reference').textContent = 'Box: ' + boxId + ' / Reference: ' + requestId;
     returnLink.href = './?box=' + encodeURIComponent(boxId); returnLink.className = '';
     checkResult();
