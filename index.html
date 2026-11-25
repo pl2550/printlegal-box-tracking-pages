@@ -446,7 +446,7 @@
 
         <div id="repeatBanner" class="repeat-banner hidden">
           <strong>Repeat mode active</strong>
-          <span id="repeatDetail">Sent to Shredder will be preselected for boxes scanned today.</span>
+          <span id="repeatDetail">Shredded will be preselected for boxes scanned today.</span>
           <button id="turnOffRepeatButton" class="secondary danger-secondary" type="button">Turn Off Repeat</button>
         </div>
 
@@ -459,7 +459,7 @@
           <input type="hidden" name="operation" id="operation" value="Update">
           <input type="hidden" name="requestId" id="requestId">
           <input type="hidden" name="confirmationMode" id="confirmationMode">
-          <input type="hidden" name="clientVersion" value="2026.11.25.1">
+          <input type="hidden" name="clientVersion" value="2026.11.25.2">
           <input type="hidden" name="confirmClearCustomerBoxNumber" id="confirmClearCustomerBoxNumber" value="0">
           <input type="hidden" name="expectedCustomerBoxNumber" id="expectedCustomerBoxNumber">
 
@@ -576,7 +576,7 @@
   <iframe name="hiddenFrame" id="hiddenFrame"></iframe>
 
   <script>
-    const CLIENT_VERSION = '2026.11.25.1';
+    const CLIENT_VERSION = '2026.11.25.2';
     const useResultPage = /iPhone|iPad|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const NAME_KEY = 'printlegal.boxTracking.deviceName.v1';
     const TOKEN_KEY = 'printlegal.boxTracking.deviceToken.v1';
@@ -905,6 +905,8 @@
       output.textContent = text;
     }
 
+    function isShreddedStatus(value) { return ['Shredded', 'Sent to Shredder', 'Send to Shredder'].includes(value); }
+
     function actionLabelForStatus(value) {
       if (value === 'Received') return 'Confirm Received';
       if (value === 'Prep') return 'Start Prep';
@@ -912,7 +914,7 @@
       if (value === 'Scanning') return 'Start Scanning';
       if (value === 'Scanned') return 'Finish Scanning';
       if (value === 'Returned') return 'Confirm Return';
-      if (value === 'Sent to Shredder') return 'Confirm Shredder Handoff';
+      if (isShreddedStatus(value)) return 'Confirm Shredder Handoff';
       if (value === 'Location Only - No Status Change') return 'Update Location Only';
       return value;
     }
@@ -1043,7 +1045,7 @@
       if (submission.status === 'Scanned') return `Scanning completed - ${submission.workMinutes} min.`;
       if (submission.status === 'Received') return 'Box received.';
       if (submission.status === 'Returned') return 'Return recorded.';
-      if (submission.status === 'Sent to Shredder') return 'Shredder handoff recorded.';
+      if (isShreddedStatus(submission.status)) return 'Shredder handoff recorded.';
       if (submission.status === 'Location Only - No Status Change') return `Location updated to ${submission.location}.`;
       return 'Update confirmed.';
     }
@@ -1072,7 +1074,7 @@
       submitButton.textContent = 'Submit Update';
       if (result.ok) {
         if (submission.repeat) {
-          localStorage.setItem(REPEAT_KEY, JSON.stringify({date: todayKey(), status: 'Sent to Shredder', location: submission.location}));
+          localStorage.setItem(REPEAT_KEY, JSON.stringify({date: todayKey(), status: 'Shredded', location: submission.location}));
         }
         form.reset();
         formBoxId.value = boxId;
@@ -1191,7 +1193,7 @@
         const raw = localStorage.getItem(REPEAT_KEY);
         if (!raw) return null;
         const preset = JSON.parse(raw);
-        if (preset.date !== todayKey() || preset.status !== 'Sent to Shredder') {
+        if (preset.date !== todayKey() || !isShreddedStatus(preset.status)) {
           localStorage.removeItem(REPEAT_KEY);
           return null;
         }
@@ -1215,13 +1217,14 @@
         const moveText = preset.location && preset.location !== 'No Location Change'
           ? ` Move Box To will be ${preset.location}.`
           : '';
-        repeatDetail.textContent = `Sent to Shredder will be preselected for boxes scanned today.${moveText}`;
+        repeatDetail.textContent = `Shredded will be preselected for boxes scanned today.${moveText}`;
       }
       updateRepeatVisibility();
     }
 
     function applyRepeatPreset() {
       const preset = getRepeatPreset();
+      if (preset && currentBox && isShreddedStatus(preset.status) && isShreddedStatus(currentBox.nextStatus)) preset.status = currentBox.nextStatus;
       if (!preset || !boxId || !currentBox || currentBox.nextStatus !== preset.status || pendingSubmit) return;
       status.value = preset.status;
       if (preset.location) {
@@ -1434,7 +1437,7 @@
     }
 
     function updateRepeatVisibility() {
-      const canRepeat = status.value === 'Sent to Shredder';
+      const canRepeat = isShreddedStatus(status.value);
       repeatPanel.classList.toggle('hidden', !canRepeat);
       if (canRepeat) {
         repeatShred.checked = Boolean(getRepeatPreset());
@@ -1632,7 +1635,7 @@
           return;
         }
       }
-      if (!customerOnly && !undoMode && status.value === 'Sent to Shredder' && !window.confirm('Confirm this box is being handed over to the shredder.')) {
+      if (!customerOnly && !undoMode && isShreddedStatus(status.value) && !window.confirm('Confirm this box is being handed over to the shredder.')) {
         event.preventDefault();
         return;
       }
@@ -1644,7 +1647,7 @@
       formUserAgent.value = navigator.userAgent || '';
       const submission = {
         id: '',
-        repeat: !customerOnly && status.value === 'Sent to Shredder' && repeatShred.checked,
+        repeat: !customerOnly && isShreddedStatus(status.value) && repeatShred.checked,
         location: locationSelect.value || 'No Location Change',
         scope: updateScope.value,
         operation: operation.value,
