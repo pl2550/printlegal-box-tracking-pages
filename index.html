@@ -191,6 +191,17 @@
       margin-top: 4px;
     }
 
+    .count-warning {
+      margin-top: 10px;
+      padding: 12px;
+      border: 1px solid #b7791f;
+      border-radius: 8px;
+      background: #fff8e1;
+      color: #713f12;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
     .field-row {
       display: grid;
       grid-template-columns: 96px minmax(0, 1fr);
@@ -448,7 +459,7 @@
           <input type="hidden" name="operation" id="operation" value="Update">
           <input type="hidden" name="requestId" id="requestId">
           <input type="hidden" name="confirmationMode" id="confirmationMode">
-          <input type="hidden" name="clientVersion" value="2026.09.23.2">
+          <input type="hidden" name="clientVersion" value="2026.11.25.1">
           <input type="hidden" name="confirmClearCustomerBoxNumber" id="confirmClearCustomerBoxNumber" value="0">
           <input type="hidden" name="expectedCustomerBoxNumber" id="expectedCustomerBoxNumber">
 
@@ -473,6 +484,7 @@
             <div id="scanOutputPanel" class="hidden">
               <div class="field-row"><label for="noOfImages">No. of Images</label><input id="noOfImages" name="noOfImages" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" placeholder="Required (0 or greater)"></div>
               <div class="field-row"><label for="noOfFiles">No. of Files</label><input id="noOfFiles" name="noOfFiles" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" placeholder="Required (0 or greater)"></div>
+              <div id="scanCountWarning" class="count-warning hidden" role="status" aria-live="polite"></div>
             </div>
             <div id="ocrPanel" class="check-row hidden">
               <input id="ocrCompleted" name="ocrCompleted" type="checkbox" value="1">
@@ -564,7 +576,7 @@
   <iframe name="hiddenFrame" id="hiddenFrame"></iframe>
 
   <script>
-    const CLIENT_VERSION = '2026.11.17.2';
+    const CLIENT_VERSION = '2026.11.25.1';
     const useResultPage = /iPhone|iPad|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const NAME_KEY = 'printlegal.boxTracking.deviceName.v1';
     const TOKEN_KEY = 'printlegal.boxTracking.deviceToken.v1';
@@ -590,6 +602,7 @@
     const workMinutes = document.getElementById('workMinutes');
     const noOfImages = document.getElementById('noOfImages');
     const noOfFiles = document.getElementById('noOfFiles');
+    const scanCountWarning = document.getElementById('scanCountWarning');
     const ocrCompleted = document.getElementById('ocrCompleted');
     const customerBoxNumberInput = document.getElementById('customerBoxNumberInput');
     const saveCustomerBoxNumberButton = document.getElementById('saveCustomerBoxNumberButton');
@@ -705,6 +718,7 @@
         if (fields.has(name)) input.value = fields.get(name);
       });
       if (fields.has('ocrCompleted')) ocrCompleted.checked = fields.get('ocrCompleted') === '1';
+      updateScanCountWarning();
     }
 
     function recoverAutomatically(submission) {
@@ -1220,6 +1234,18 @@
       updateWorkTimeVisibility();
     }
 
+    function updateScanCountWarning() {
+      const valid = [noOfImages, noOfFiles].every(input => /^\d+$/.test(input.value.trim()) && Number.isSafeInteger(Number(input.value)));
+      const warn = !undoMode && status.value === 'Scanned' && valid && Number(noOfFiles.value) > Number(noOfImages.value);
+      scanCountWarning.textContent = warn
+        ? `Check counts: ${Number(noOfFiles.value)} files is more than ${Number(noOfImages.value)} pages (No. of Images). Have the numbers been swapped? You can still save if they are correct.`
+        : '';
+      scanCountWarning.classList.toggle('hidden', !warn);
+      return warn;
+    }
+    noOfImages.addEventListener('input', updateScanCountWarning);
+    noOfFiles.addEventListener('input', updateScanCountWarning);
+
     function updateWorkTimeVisibility() {
       const scan = !undoMode && status.value === 'Scanned';
       const ocr = !undoMode && (scan || status.value === 'OCR Completed') && !(currentBox && currentBox.ocr);
@@ -1237,6 +1263,7 @@
       workTimeHint.classList.toggle('hidden', !needsTime);
       workMinutes.required = needsTime;
       if (!needsTime) workMinutes.value = '';
+      updateScanCountWarning();
       updateSubmitButtonLabel();
     }
 
@@ -1609,6 +1636,9 @@
         event.preventDefault();
         return;
       }
+      if (scanFinish && updateScanCountWarning() && !window.confirm(
+        `No. of Files: ${Number(noOfFiles.value)}\nPages (No. of Images): ${Number(noOfImages.value)}\n\nThe file count is greater than the page count. Have the numbers been swapped?\n\nChoose Cancel to correct the counts, or OK to save them as entered.`
+      )) return;
       formName.value = getStoredName();
       formDeviceToken.value = getDeviceToken();
       formUserAgent.value = navigator.userAgent || '';
